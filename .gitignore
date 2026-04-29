@@ -4,11 +4,9 @@ __pycache__/
 .Python
 *.egg-info/
 
-# Artifacts (checkpoints, logs, stats) – keep the directory, not contents
+# Artifacts: checkpoints and TensorBoard runs (not tracked)
 artifacts/checkpoints/
 artifacts/runs/
-artifacts/metrics.csv
-artifacts/norm_stats.json
 
 # Ensemble / nested runs (large .pt files were stalling `git add .`)
 artifacts/ensemble/**/checkpoints/
