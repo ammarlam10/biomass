@@ -2,11 +2,11 @@
 Main training entrypoint – single-GPU and multi-GPU (DDP).
 
 Single-GPU (default):
-    python scripts/train.py --config configs/default.yaml
+    python scripts/train.py --config configs/unet_resnet50.yaml
 
 Multi-GPU DDP via torchrun (e.g. 2 GPUs):
     torchrun --standalone --nproc_per_node=2 \\
-        scripts/train.py --config configs/default.yaml --ddp
+        scripts/train.py --config configs/unet_resnet50.yaml --ddp
 
 Or use the docker-compose `train_ddp` service which sets this up automatically.
 
@@ -38,7 +38,7 @@ from src.utils.config import load_config, load_norm_stats
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train biomass regression model")
-    p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--config", default="configs/unet_resnet50.yaml")
     p.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
     p.add_argument(
         "--ddp",
@@ -153,7 +153,7 @@ def main() -> None:
             print(
                 f"[ERROR] Norm stats not found at '{norm_stats_path}'.\n"
                 "Run compute_stats.py first:\n"
-                "    python scripts/compute_stats.py --config configs/default.yaml"
+                "    python scripts/compute_stats.py --config configs/unet_resnet50.yaml"
             )
         sys.exit(1)
     norm_stats = load_norm_stats(norm_stats_path)

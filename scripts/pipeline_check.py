@@ -45,7 +45,7 @@ WARN = "[WARN]"
 
 
 def main() -> None:
-    cfg = load_config("/workspace/configs/default.yaml")
+    cfg = load_config("/workspace/configs/unet_resnet50.yaml")
     errors: list[str] = []
 
     # ── 1. Parquet split file ─────────────────────────────────────────────────

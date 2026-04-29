@@ -201,7 +201,7 @@ Both targets are stored as float32 Zarr arrays of shape `(13626, 128, 128)`.
 | Mean (tree pixels) | 21.9 m |
 | 95th percentile | 33.6 m |
 | Max observed | 53.7 m |
-| Training transform | `none` (config: `data.target_transform.mean_height: none`) |
+| Training transform | `log1p` (config: `data.target_transform.mean_height: log1p`) |
 
 > `mean_height` NaN pattern drives the **valid pixel mask**.
 
@@ -301,7 +301,7 @@ patch at a time in `__getitem__`, making it safe to use with PyTorch
 ```bash
 # Inspect parquet columns
 docker compose run --rm compute_stats \
-  python scripts/compute_stats.py --config configs/default.yaml --inspect
+  python scripts/compute_stats.py --config configs/unet_resnet50.yaml --inspect
 
 # Full pipeline validation (shapes, NaN, model forward, loss)
 docker compose run --rm check

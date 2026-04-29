@@ -219,5 +219,6 @@ class BiomassDataset(Dataset):
             raise KeyError(
                 f"Expected columns {missing} not found in parquet file.\n"
                 f"Available columns: {df.columns.tolist()}\n"
-                "Update data.split_column / data.patch_idx_column in configs/default.yaml."
+                "Update data.split_column / data.patch_idx_column in configs/unet_resnet50.yaml "
+                "or configs/xgboost.yaml."
             )

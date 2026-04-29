@@ -24,4 +24,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Default command – override in docker-compose or `docker run`
-CMD ["python", "scripts/train.py", "--config", "configs/default.yaml"]
+CMD ["python", "scripts/train.py", "--config", "configs/unet_resnet50.yaml"]

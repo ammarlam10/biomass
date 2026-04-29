@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# XGBoost baseline – scripts/train_xgboost.py, scripts/evaluate_xgboost.py
+# Shares the same `data` block as UNet for comparable metrics.
+# Paths assume Docker mounts: data → /data, code → /workspace
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  root: /data
+  split_file: /data/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]
+  s2_seasons: [summer, autumn, spring, winter]
+  use_species: true
+
+  valid_mask_mode: notnull
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+# Seed for XGBoost random_state and pixel subsampling (scripts/train_xgboost.py).
+training:
+  seed: 42
+
+# ─── XGBoost ──────────────────────────────────────────────────────────────────
+xgboost:
+  feature_mode: pixel
+  # Higher than 0.01 feeds more pixels per patch into training (better signal for
+  # mean_height); increase further if RAM allows, reduce if OOM.
+  subsample_pixels: 0.03
+
+  n_estimators: 2000
+  max_depth: 6
+  learning_rate: 0.03
+  subsample: 0.8
+  colsample_bytree: 0.8
+  min_child_weight: 5
+  tree_method: hist
+  device: cuda              # set to "cpu" if no GPU
+  early_stopping_rounds: 40
+
+  save_dir: /workspace/artifacts

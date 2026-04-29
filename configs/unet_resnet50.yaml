@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Biomass UNet baseline – default configuration
-# All paths are relative to the Docker container mounts:
-#   data  → /data    (mounted read-only from /work/ammar/sslrp/data/biomass)
-#   code  → /workspace  (mounted from /work/ammar/sslrp/biomass)
+# UNet + ResNet50 encoder – training / evaluation config
+# Paths assume Docker mounts:
+#   data  → /data    (read-only)
+#   code  → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
@@ -38,7 +38,6 @@ data:
 # ─── Model ────────────────────────────────────────────────────────────────────
 model:
   # Registry key → one of: unet_resnet50 | vit_segmentation | prithvi_adapter
-  # XGBoost uses a separate script (scripts/train_xgboost.py)
   name: unet_resnet50
 
   unet:
@@ -71,7 +70,7 @@ training:
   # Has no effect in single-GPU mode.
   ddp: false
 
-  epochs: 150
+  epochs: 100
   lr: 1.0e-4
   weight_decay: 1.0e-4
 

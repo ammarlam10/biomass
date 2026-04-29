@@ -2,7 +2,7 @@
 Compute per-channel mean and std over the training split and save to JSON.
 
 Run this ONCE before training:
-    python scripts/compute_stats.py --config configs/default.yaml
+    python scripts/compute_stats.py --config configs/unet_resnet50.yaml
 
 Parallelism:
     --num_workers N  splits the patch list into N chunks and computes partial
@@ -113,7 +113,7 @@ def _worker_stats(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Compute per-channel normalisation stats")
-    p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--config", default="configs/unet_resnet50.yaml")
     p.add_argument(
         "--subsample",
         type=float,
@@ -158,7 +158,7 @@ def main() -> None:
         print(
             f"[ERROR] Expected columns '{split_col}' and '{idx_col}' not found.\n"
             f"Available: {df.columns.tolist()}\n"
-            "Use --inspect to explore the file, then update configs/default.yaml."
+            "Use --inspect to explore the file, then update configs/unet_resnet50.yaml."
         )
         sys.exit(1)
 

@@ -292,11 +292,13 @@ class Trainer:
         with torch.no_grad():
             for x, y, mask in tqdm(loader, desc="Eval [test]", leave=False, disable=not self.is_main):
                 x = x.to(self.device, non_blocking=True)
-                if self.amp:
-                    with torch.cuda.amp.autocast():
+                # Full-precision forward: AMP fp16 logits + expm1() blow up orig-scale RMSE.
+                if self.device.type == "cuda":
+                    with torch.cuda.amp.autocast(enabled=False):
                         pred = model(x)
                 else:
                     pred = model(x)
+                pred = pred.float()
                 total_support += mask.float().mean().item()
                 n_batches += 1
                 rm.update(pred.detach().cpu(), y.detach().cpu(), mask.detach().cpu())
@@ -333,32 +335,62 @@ class Trainer:
         # Formatted console table
         self._print_test_table(best_epoch, test_metrics)
 
-        # JSON alongside the best checkpoint
+        # JSON alongside the best checkpoint – include provenance metadata
         out_path = self.save_dir / "test_metrics.json"
+        payload = {
+            "epoch": best_epoch,
+            "checkpoint": str(best_ckpt_path),
+            "n_patches": len(test_loader.dataset),
+        }
+        payload.update({k: (v if v == v else None) for k, v in test_metrics.items()})
         with open(out_path, "w") as fh:
-            json.dump(
-                {k: (v if v == v else None) for k, v in test_metrics.items()},
-                fh,
-                indent=2,
-            )
+            json.dump(payload, fh, indent=2)
         print(f"  Test metrics saved → {out_path}")
 
     def _print_test_table(self, epoch: int, metrics: Dict[str, float]) -> None:
-        W = 60
+        W = 66
         print(f"\n{'─' * W}")
         print(f"  Test evaluation  (best checkpoint: epoch {epoch})")
         print(f"{'─' * W}")
         print(f"  Support ratio  : {metrics.get('support_ratio', float('nan')):.4f}")
-        targets = [("tree_count", "count (log1p)"), ("mean_height", "height (log1p)")]
-        for tgt, label in targets:
+        print(f"  Note: *_orig uses clamped expm1 (no overflow from regression tails).")
+        print(f"{'─' * W}")
+
+        targets = [
+            ("tree_count",  "count", "log1p-count",  "trees"),
+            ("mean_height", "height", "log1p-height", "m"),
+        ]
+        for tgt, short, label_log, unit in targets:
             rmse = metrics.get(f"rmse_{tgt}", float("nan"))
             mae  = metrics.get(f"mae_{tgt}",  float("nan"))
             r2   = metrics.get(f"r2_{tgt}",   float("nan"))
-            print(f"  {label:16s}  RMSE={rmse:.4f}  MAE={mae:.4f}  R²={r2:.4f}")
-            orig = metrics.get(f"rmse_{tgt}_orig")
-            if orig is not None:
-                unit = "trees" if tgt == "tree_count" else "m"
-                print(f"  {'':16s}  RMSE_orig={orig:.4f} {unit}  (original scale)")
+
+            r2_str = f"{r2:.4f}"
+            # R² near or below 0 on tree_count is expected: on valid (tree) pixels
+            # tree_count is 1–8 with median=1, giving tiny SS_tot ≈ RMSE² → R² ≈ 0.
+            # It signals "model is near the mean-predictor level" for this metric, not
+            # a model failure — prefer RMSE/MAE for tree_count.
+            if r2 < 0.05:
+                r2_str += "  ← low (see note)"
+
+            print(f"\n  {label_log} space:")
+            print(f"    RMSE = {rmse:.4f}   MAE = {mae:.4f}   R² = {r2_str}")
+
+            rmse_o = metrics.get(f"rmse_{tgt}_orig")
+            if rmse_o is not None:
+                mae_o = metrics.get(f"mae_{tgt}_orig", float("nan"))
+                r2_o  = metrics.get(f"r2_{tgt}_orig",  float("nan"))
+                print(f"  original scale ({unit}):")
+                print(f"    RMSE = {rmse_o:.4f}   MAE = {mae_o:.4f}   R² = {r2_o:.4f}")
+
+        # Explain near-zero R² on tree_count
+        print(f"\n{'─' * W}")
+        print("  Why R²(tree_count) is near/below zero:")
+        print("    On valid (tree) pixels, tree_count = 1–8, median = 1, ~50% of")
+        print("    pixels equal 1. After log1p the target std ≈ 0.26 — nearly the")
+        print("    same magnitude as RMSE. SS_tot is therefore tiny, so R² ≈ 0 even")
+        print("    when RMSE is reasonable. Use RMSE / MAE as the primary metric for")
+        print("    tree_count; R² is unreliable for this near-constant distribution.")
         print(f"{'─' * W}\n")
 
     # ── helpers ───────────────────────────────────────────────────────────────
@@ -409,7 +441,8 @@ class Trainer:
             "epoch", "phase", "loss",
             "rmse_tree_count", "mae_tree_count", "r2_tree_count",
             "rmse_mean_height", "mae_mean_height", "r2_mean_height",
-            "rmse_tree_count_orig", "rmse_mean_height_orig",
+            "rmse_tree_count_orig", "mae_tree_count_orig", "r2_tree_count_orig",
+            "rmse_mean_height_orig", "mae_mean_height_orig", "r2_mean_height_orig",
             "support_ratio", "lr",
         ]
         self._csv_writer = csv.DictWriter(

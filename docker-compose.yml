@@ -67,7 +67,7 @@ services:
       - CUDA_VISIBLE_DEVICES=2      # CPU-only script; GPU not used, but keep consistent
     command: >
       python scripts/compute_stats.py
-        --config configs/default.yaml
+        --config configs/unet_resnet50.yaml
         --num_workers 12
 
   # ── 2. Single-GPU train (default) – targets V100S GPU 2 ─────────────────────
@@ -80,7 +80,7 @@ services:
       - CUDA_VISIBLE_DEVICES=2  # V100S 32GB; change to 3/5 for the other V100S
     command: >
       python scripts/train.py
-        --config configs/default.yaml
+        --config configs/unet_resnet50.yaml
 
   # ── 3. Multi-GPU DDP train – V100S×2 + V100 (GPUs 2, 3, 5 → 3×32 GB) ────────
   #   Launches 3 processes via torchrun, one per GPU.
@@ -97,7 +97,7 @@ services:
         --standalone
         --nproc_per_node=3
         scripts/train.py
-        --config configs/default.yaml
+        --config configs/unet_resnet50.yaml
         --ddp
 
   # ── 4. Evaluate on test split ───────────────────────────────────────────────
@@ -110,7 +110,7 @@ services:
       - CUDA_VISIBLE_DEVICES=2
     command: >
       python scripts/evaluate.py
-        --config configs/default.yaml
+        --config configs/unet_resnet50.yaml
         --checkpoint /workspace/artifacts/checkpoints/best.pt
         --split test
 
@@ -124,7 +124,7 @@ services:
       - CUDA_VISIBLE_DEVICES=2
     command: >
       python scripts/evaluate.py
-        --config configs/default.yaml
+        --config configs/unet_resnet50.yaml
         --checkpoint /workspace/artifacts/checkpoints/best.pt
         --split val
 
@@ -155,8 +155,25 @@ services:
     command: >
       python scripts/pipeline_check.py
 
-  # ── 8. XGBoost baseline (Stage 3 stub) ───────────────────────────────────
+  # ── 8. XGBoost baseline – train (pixel-level features, GPU-accelerated) ──────
+  #   Uses xgboost.device=cuda (set in configs/xgboost.yaml) so tree building runs on GPU.
+  #   Includes test evaluation at the end; pass --no_test to skip it.
+  #   Override feature mode at runtime:
+  #     docker compose run --rm train_xgboost python scripts/train_xgboost.py \
+  #       --config configs/xgboost.yaml --feature_mode patch
   train_xgboost:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2      # V100S 32GB; XGBoost hist method runs on this GPU
+    command: >
+      python scripts/train_xgboost.py
+        --config configs/xgboost.yaml
+
+  # ── 9. XGBoost evaluate – test split ─────────────────────────────────────────
+  eval_xgboost:
     build: .
     image: biomass:latest
     <<: [*gpu_single, *volumes]
@@ -164,5 +181,21 @@ services:
     environment:
       - CUDA_VISIBLE_DEVICES=2
     command: >
-      python scripts/train_xgboost.py
-        --config configs/default.yaml
+      python scripts/evaluate_xgboost.py
+        --config configs/xgboost.yaml
+        --model_dir /workspace/artifacts
+        --split test
+
+  # ── 10. XGBoost evaluate – val split ─────────────────────────────────────────
+  eval_xgboost_val:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate_xgboost.py
+        --config configs/xgboost.yaml
+        --model_dir /workspace/artifacts
+        --split val

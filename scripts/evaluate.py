@@ -3,7 +3,7 @@ Evaluate a saved checkpoint on val or test split.
 
 Usage (inside container):
     python scripts/evaluate.py \\
-        --config configs/default.yaml \\
+        --config configs/unet_resnet50.yaml \\
         --checkpoint /workspace/artifacts/checkpoints/best.pt \\
         --split test \\
         --output /workspace/artifacts/test_metrics.json
@@ -31,7 +31,7 @@ from src.utils.config import load_config, load_norm_stats
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate biomass regression model")
-    p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--config", default="configs/unet_resnet50.yaml")
     p.add_argument(
         "--checkpoint",
         default="/workspace/artifacts/checkpoints/best.pt",

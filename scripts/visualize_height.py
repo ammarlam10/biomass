@@ -44,7 +44,7 @@ _SPLITS = ("train", "val", "test")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Visualize mean_height predictions")
-    p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--config", default="configs/unet_resnet50.yaml")
     p.add_argument(
         "--checkpoint",
         default="/workspace/artifacts/checkpoints/best.pt",

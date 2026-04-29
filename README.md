@@ -29,11 +29,11 @@ docker compose build
 
 ```bash
 docker compose run --rm compute_stats \
-    python scripts/compute_stats.py --config configs/default.yaml --inspect
+    python scripts/compute_stats.py --config configs/unet_resnet50.yaml --inspect
 ```
 
-Update `configs/default.yaml` (`data.split_column`, `data.patch_idx_column`) if
-the defaults (`split`, `patch_idx`) don't match.
+Update `configs/unet_resnet50.yaml` and `configs/xgboost.yaml` (`data.split_column`, `data.patch_idx_column`) if
+the defaults (`split`, `zarr_idx`) don't match.
 
 ### 3. Compute per-channel normalisation stats (run once)
 
@@ -80,7 +80,8 @@ biomass/
 ├── docker-compose.yml
 ├── requirements.txt
 ├── configs/
-│   └── default.yaml          ← all hyperparams and paths
+│   ├── unet_resnet50.yaml    ← UNet training / eval / compute_stats
+│   └── xgboost.yaml          ← XGBoost baseline (train_xgboost, evaluate_xgboost)
 ├── src/
 │   ├── data/
 │   │   ├── dataset.py        ← BiomassDataset (zarr + parquet)
@@ -100,7 +101,8 @@ biomass/
 │   ├── train.py              ← main training entrypoint
 │   ├── evaluate.py           ← evaluation on any split
 │   ├── smoke_test.py         ← pipeline connectivity check
-│   └── train_xgboost.py      ← Stage 3 stub
+│   ├── train_xgboost.py      ← XGBoost baseline
+│   └── evaluate_xgboost.py   ← XGBoost evaluation
 ├── notebooks/
 │   └── explore_data.ipynb    ← EDA (run inside notebook service)
 └── artifacts/                ← created at runtime (gitignored)
@@ -114,7 +116,7 @@ biomass/
 
 ## Config Reference
 
-Key settings in `configs/default.yaml`:
+Key settings in `configs/unet_resnet50.yaml` (UNet) / `configs/xgboost.yaml` (XGBoost; shares the same `data` block for fair comparison):
 
 | Key | Default | Description |
 |---|---|---|
@@ -139,7 +141,7 @@ Key settings in `configs/default.yaml`:
        return MyModel(in_channels=num_input_channels, ...)
    ```
 3. Add `from src.models import my_model` to `src/models/__init__.py`
-4. Set `model.name: my_model` in `configs/default.yaml`
+4. Set `model.name: my_model` in `configs/unet_resnet50.yaml`
 5. No changes needed to the trainer, loss, or metrics.
 
 ## Roadmap
@@ -149,4 +151,4 @@ Key settings in `configs/default.yaml`:
 | Baseline | UNet + ResNet50 | Implemented |
 | Stage 1 | ViT segmentation | Stub (`vit_segmentation.py`) |
 | Stage 2 | Prithvi foundation model adapter | Stub (`prithvi_adapter.py`) |
-| Stage 3 | XGBoost pixel baseline | Stub (`train_xgboost.py`) |
+| Stage 3 | XGBoost pixel baseline | Implemented (`train_xgboost.py`, `evaluate_xgboost.py`) |

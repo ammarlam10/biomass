@@ -28,6 +28,18 @@ import torch
 
 TARGET_NAMES: List[str] = ["tree_count", "mean_height"]
 
+# Upper clamp in log1p-space before expm1 when mapping to original units for metrics.
+# Prevents overflow from unconstrained regression tails / fp16 noise (expm1 grows fast).
+# Values are generous vs. dataset max (count≈8, height≈54 m).
+_LOG1P_INV_MAX: tuple[float, float] = (math.log1p(64.0), math.log1p(128.0))
+
+
+def _inverse_log1p_stable(log_max: float) -> Callable[[torch.Tensor], torch.Tensor]:
+    def fn(x: torch.Tensor) -> torch.Tensor:
+        return torch.expm1(x.clamp(min=-0.999999, max=log_max))
+
+    return fn
+
 
 class RunningMetrics:
     """
@@ -57,8 +69,11 @@ class RunningMetrics:
         self._sum_t = [0.0] * n      # sum of targets (for R²)
         self._sum_t2 = [0.0] * n     # sum of target² (for R²)
         self._cnt = [0] * n          # valid pixel count
-        # original-space (after inverse transform)
+        # original-space (after inverse transform) – full set for RMSE, MAE, R²
         self._sse_orig = [0.0] * n
+        self._sae_orig = [0.0] * n
+        self._sum_t_orig = [0.0] * n
+        self._sum_t2_orig = [0.0] * n
         self._cnt_orig = [0] * n
 
     def update(
@@ -92,7 +107,11 @@ class RunningMetrics:
                 if self._inv_transforms[i] is not None:
                     p_orig = self._inv_transforms[i](p)
                     t_orig = self._inv_transforms[i](t)
-                    self._sse_orig[i] += ((p_orig - t_orig) ** 2).sum().item()
+                    res_orig = p_orig - t_orig
+                    self._sse_orig[i] += (res_orig ** 2).sum().item()
+                    self._sae_orig[i] += res_orig.abs().sum().item()
+                    self._sum_t_orig[i] += t_orig.sum().item()
+                    self._sum_t2_orig[i] += (t_orig ** 2).sum().item()
                     self._cnt_orig[i] += n
 
     def compute(self) -> Dict[str, float]:
@@ -114,9 +133,14 @@ class RunningMetrics:
             results[f"r2_{name}"] = 1.0 - self._sse[i] / (ss_tot + 1e-8)
 
             if self._cnt_orig[i] > 0:
+                n_o = self._cnt_orig[i]
                 results[f"rmse_{name}_orig"] = math.sqrt(
-                    max(self._sse_orig[i] / self._cnt_orig[i], 0.0)
+                    max(self._sse_orig[i] / n_o, 0.0)
                 )
+                results[f"mae_{name}_orig"] = self._sae_orig[i] / n_o
+                mean_t_orig = self._sum_t_orig[i] / n_o
+                ss_tot_orig = self._sum_t2_orig[i] - n_o * mean_t_orig ** 2
+                results[f"r2_{name}_orig"] = 1.0 - self._sse_orig[i] / (ss_tot_orig + 1e-8)
 
         return results
 
@@ -184,13 +208,16 @@ def get_inverse_transforms(cfg: dict) -> List[Optional[Callable]]:
     """
     Build inverse-transform callables matching target_transform config.
     Order: [tree_count, mean_height]
+
+    log1p inverses clamp before expm1 so RMSE/MAE in original units stay finite when
+    predictions leave the physical range (common under AMP or heavy tails).
     """
     tt = cfg.get("data", {}).get("target_transform", {})
-    result = []
-    for name in TARGET_NAMES:
+    result: List[Optional[Callable[[torch.Tensor], torch.Tensor]]] = []
+    for i, name in enumerate(TARGET_NAMES):
         mode = tt.get(name, "none")
         if mode == "log1p":
-            result.append(torch.expm1)
+            result.append(_inverse_log1p_stable(_LOG1P_INV_MAX[i]))
         else:
             result.append(None)
     return result

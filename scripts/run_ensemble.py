@@ -65,8 +65,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--config",
-        default="configs/default.yaml",
-        help="Config file passed to train.py (default: configs/default.yaml)",
+        default="configs/unet_resnet50.yaml",
+        help="Config file passed to train.py (default: configs/unet_resnet50.yaml)",
     )
     p.add_argument(
         "--seeds",
