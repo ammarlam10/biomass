@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+
+# Artifacts (checkpoints, logs, stats) – keep the directory, not contents
+artifacts/checkpoints/
+artifacts/runs/
+artifacts/metrics.csv
+artifacts/norm_stats.json
+
+# Ensemble / nested runs (large .pt files were stalling `git add .`)
+artifacts/ensemble/**/checkpoints/
+artifacts/ensemble/**/runs/
+artifacts/**/*.pt
+artifacts/vis_height/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Misc
+.DS_Store
+*.swp

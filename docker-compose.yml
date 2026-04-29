@@ -1,0 +1,168 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Biomass pipeline services
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed on the host
+#   - docker compose v2 (or docker-compose v1.29+)
+#
+# GPU layout on this host (from nvidia-smi):
+#   GPU 0 – Tesla P100-PCIE-16GB
+#   GPU 1 – Tesla P100-PCIE-16GB
+#   GPU 2 – Tesla V100S-PCIE-32GB   ← preferred for training (Tensor Cores)
+#   GPU 3 – Tesla V100S-PCIE-32GB
+#   GPU 4 – Tesla P100-PCIE-16GB
+#   GPU 5 – Tesla V100-PCIE-32GB
+#
+# Services pin to GPU 2 by default via CUDA_VISIBLE_DEVICES.
+# Change the value or override at runtime:
+#   CUDA_VISIBLE_DEVICES=3 docker compose run --rm train
+#
+# For multi-GPU DDP use the `train_ddp` service (GPUs 2 + 3 by default).
+#
+# GPU access uses the `deploy.resources` spec (docker compose v2).
+# If you need the older `runtime: nvidia` syntax, swap each `deploy` block
+# for `runtime: nvidia`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+# ── shared YAML anchors ───────────────────────────────────────────────────────
+
+# Single GPU – exposes all GPUs to the container; CUDA_VISIBLE_DEVICES
+# narrows the actual selection at the process level.
+x-gpu-single: &gpu_single
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+# Two GPU – for DDP runs on V100S pair (GPUs 2 & 3).
+x-gpu-two: &gpu_two
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-volumes: &volumes
+  volumes:
+    - /work/ammar/sslrp/data/biomass:/data:ro         # dataset – read-only
+    - /work/ammar/sslrp/biomass:/workspace             # source code
+    - /work/ammar/sslrp/biomass/artifacts:/workspace/artifacts  # outputs
+
+services:
+
+  # ── 1. Compute per-channel normalisation stats (run once) ──────────────────
+  compute_stats:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '4g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2      # CPU-only script; GPU not used, but keep consistent
+    command: >
+      python scripts/compute_stats.py
+        --config configs/default.yaml
+        --num_workers 12
+
+  # ── 2. Single-GPU train (default) – targets V100S GPU 2 ─────────────────────
+  train:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '16g'             # PyTorch DataLoader workers need /dev/shm space
+    environment:
+      - CUDA_VISIBLE_DEVICES=2  # V100S 32GB; change to 3/5 for the other V100S
+    command: >
+      python scripts/train.py
+        --config configs/default.yaml
+
+  # ── 3. Multi-GPU DDP train – V100S×2 + V100 (GPUs 2, 3, 5 → 3×32 GB) ────────
+  #   Launches 3 processes via torchrun, one per GPU.
+  #   Effective batch size = config batch_size × 3 = 96.
+  train_ddp:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_two, *volumes]
+    shm_size: '32g'             # DDP NCCL also uses shared memory
+    environment:
+      - CUDA_VISIBLE_DEVICES=2,3,5
+    command: >
+      torchrun
+        --standalone
+        --nproc_per_node=3
+        scripts/train.py
+        --config configs/default.yaml
+        --ddp
+
+  # ── 4. Evaluate on test split ───────────────────────────────────────────────
+  eval:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/default.yaml
+        --checkpoint /workspace/artifacts/checkpoints/best.pt
+        --split test
+
+  # ── 5. Evaluate on val split ────────────────────────────────────────────────
+  eval_val:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/default.yaml
+        --checkpoint /workspace/artifacts/checkpoints/best.pt
+        --split val
+
+  # ── 6. Jupyter notebook for EDA / debugging ─────────────────────────────────
+  notebook:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    ports:
+      - "8888:8888"
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      jupyter notebook
+        --ip=0.0.0.0 --port=8888
+        --no-browser --allow-root
+        --NotebookApp.token=''
+
+  # ── 7. Pipeline check (data + model validation) ───────────────────────────
+  check:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '16g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/pipeline_check.py
+
+  # ── 8. XGBoost baseline (Stage 3 stub) ───────────────────────────────────
+  train_xgboost:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train_xgboost.py
+        --config configs/default.yaml
