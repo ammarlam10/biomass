@@ -199,3 +199,64 @@ services:
         --config configs/xgboost.yaml
         --model_dir /workspace/artifacts
         --split val
+
+  # ── 11. SegFormer train – single GPU ─────────────────────────────────────────
+  train_segformer:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '16g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train.py
+        --config configs/segformer.yaml
+        --run-dir /workspace/artifacts/segformer
+
+  # ── 12. SegFormer evaluate – test split ──────────────────────────────────────
+  eval_segformer:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/segformer.yaml
+        --checkpoint /workspace/artifacts/segformer/checkpoints/best.pt
+        --split test
+
+  # ── 13. SegFormer evaluate – val split ───────────────────────────────────────
+  eval_segformer_val:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/segformer.yaml
+        --checkpoint /workspace/artifacts/segformer/checkpoints/best.pt
+        --split val
+
+  # ── 14. Compare all models (UNet vs XGBoost vs SegFormer) ────────────────────
+  #   Reads test_metrics.json files produced by each model's eval service.
+  #   Run after eval, eval_xgboost, and eval_segformer have completed.
+  #   Override --format for CSV or JSON output:
+  #     docker compose run --rm compare_models \
+  #       python scripts/compare_models.py \
+  #         --unet    /workspace/artifacts/checkpoints/test_metrics.json \
+  #         --xgb     /workspace/artifacts/test_metrics_xgboost.json \
+  #         --segformer /workspace/artifacts/segformer/checkpoints/test_metrics.json \
+  #         --format csv
+  compare_models:
+    build: .
+    image: biomass:latest
+    <<: *volumes
+    command: >
+      python scripts/compare_models.py
+        --unet      /workspace/artifacts/checkpoints/test_metrics.json
+        --xgb       /workspace/artifacts/test_metrics_xgboost.json
+        --segformer /workspace/artifacts/segformer/checkpoints/test_metrics.json

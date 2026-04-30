@@ -1,0 +1,18 @@
+{
+  "epoch": 22,
+  "checkpoint": "/workspace/artifacts/segformer/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.225740772601428,
+  "mae_tree_count": 0.2051473036447983,
+  "r2_tree_count": 0.02133083771565214,
+  "rmse_tree_count_orig": 0.6027252938547356,
+  "mae_tree_count_orig": 0.5133503426326905,
+  "r2_tree_count_orig": 0.019268136287928228,
+  "rmse_mean_height": 0.3462630318916684,
+  "mae_mean_height": 0.26083125157365117,
+  "r2_mean_height": 0.3715768143458906,
+  "rmse_mean_height_orig": 6.553152603403073,
+  "mae_mean_height_orig": 5.152739679303528,
+  "r2_mean_height_orig": 0.38244622979454723,
+  "support_ratio": 0.2674509101900561
+}
