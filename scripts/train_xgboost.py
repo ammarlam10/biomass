@@ -309,6 +309,8 @@ def parse_args() -> argparse.Namespace:
                    help="DataLoader workers for feature extraction (default: 4)")
     p.add_argument("--no_test", action="store_true",
                    help="Skip test-set evaluation after training")
+    p.add_argument("--save-dir", dest="save_dir", default=None, metavar="PATH",
+                   help="Override xgboost.save_dir (use for per-seed artifact isolation).")
     return p.parse_args()
 
 
@@ -332,6 +334,8 @@ def main() -> None:
 
     feature_mode     = xgb_cfg.get("feature_mode", "pixel")
     subsample_pixels = float(xgb_cfg.get("subsample_pixels", 0.01))
+    if args.save_dir is not None:
+        xgb_cfg["save_dir"] = args.save_dir
     save_dir         = Path(xgb_cfg.get("save_dir", "/workspace/artifacts"))
     save_dir.mkdir(parents=True, exist_ok=True)
 

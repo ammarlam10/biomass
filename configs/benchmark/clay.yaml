@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Benchmark config: Clay v1.5 adapter  (3-seed reproducibility study)
+#
+# Training is split into two sequential phases per seed, driven by CLI flags:
+#
+#   Phase 1 – freeze encoder (30 epochs):
+#     torchrun … scripts/train.py --config configs/benchmark/clay.yaml \
+#       --freeze-clay-encoder --lr 1e-4 --epochs 30 \
+#       --run-dir <artifacts>/benchmark/clay/seed_S/p1
+#
+#   Phase 2 – unfreeze encoder (30 epochs), resume from Phase 1 best:
+#     torchrun … scripts/train.py --config configs/benchmark/clay.yaml \
+#       --no-freeze-clay-encoder --lr 5e-5 --epochs 30 \
+#       --resume <artifacts>/benchmark/clay/seed_S/p1/checkpoints/best.pt \
+#       --run-dir <artifacts>/benchmark/clay/seed_S/p2
+#
+#   Final test metrics → <artifacts>/benchmark/clay/seed_S/p2/checkpoints/test_metrics.json
+#
+# Paths use Docker mounts:
+#   dataset      → /data/ammar/4g.zarr  (read-only)
+#   code         → /workspace
+#   Clay ckpt    → /workspace/artifacts/checkpoints/clay-v1.5.ckpt
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  root: /data/ammar/4g.zarr
+  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]   # 4 × 2 bands = 8 ch
+  s2_seasons: [summer, autumn, spring, winter]   # 4 × 10 bands = 40 ch
+  use_species: true
+
+  valid_mask_mode: notnull
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: clay_adapter
+
+  clay:
+    ckpt_path: /workspace/artifacts/checkpoints/clay-v1.5.ckpt
+    metadata_path: /workspace/configs/clay_metadata.yaml
+
+    # Overridden at launch via --freeze-clay-encoder / --no-freeze-clay-encoder.
+    # Phase 1: true  (head + species branch, ~few M params)
+    # Phase 2: false (full fine-tune, ~311 M params)
+    freeze_encoder: true
+
+    species_feat_dim: 32
+
+# ─── Training ─────────────────────────────────────────────────────────────────
+training:
+  seed: 42             # overridden per run via --seed CLI flag
+  deterministic: false
+  cudnn_benchmark: true
+  ddp: false           # enabled at launch via --ddp; torchrun handles it
+
+  # Phase 1 (frozen encoder): batch 16 comfortable on V100S 32 GB
+  # Phase 2 (unfrozen):       reduce to 8 if OOM; set via docker -e BATCH_SIZE
+  batch_size: 16
+  num_workers: 8
+  prefetch_factor: 2
+  pin_memory: true
+
+  # epochs / lr / freeze_encoder all overridden via CLI per phase – see header.
+  epochs: 30
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+
+  scheduler: cosine
+  loss: masked_smooth_l1
+
+  loss_weights:
+    tree_count: 1.0
+    mean_height: 1.0
+
+  gradient_accumulation_steps: 1
+  amp: true
+
+  save_dir: /workspace/artifacts/benchmark/clay/seed_42/p1/checkpoints
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  tensorboard_dir: /workspace/artifacts/benchmark/clay/seed_42/p1/runs
+  csv_path: /workspace/artifacts/benchmark/clay/seed_42/p1/metrics.csv
+  log_every_n_steps: 10

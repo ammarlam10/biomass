@@ -71,6 +71,33 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override training.num_workers (lower this when many parallel jobs exhaust /dev/shm in Docker).",
     )
+    p.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Override training.epochs from config.",
+    )
+    p.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Override training.lr from config.",
+    )
+    freeze_group = p.add_mutually_exclusive_group()
+    freeze_group.add_argument(
+        "--freeze-clay-encoder",
+        dest="freeze_clay_encoder",
+        action="store_true",
+        help="Set model.clay.freeze_encoder=true (Phase 1 Clay training).",
+    )
+    freeze_group.add_argument(
+        "--no-freeze-clay-encoder",
+        dest="freeze_clay_encoder",
+        action="store_false",
+        help="Set model.clay.freeze_encoder=false (Phase 2 Clay training).",
+    )
+    # Default None means "do not override config"; only changed when flag is explicitly passed.
+    p.set_defaults(freeze_clay_encoder=None)
     return p.parse_args()
 
 
@@ -124,6 +151,12 @@ def main() -> None:
         cfg["logging"]["csv_path"] = os.path.join(args.run_dir, "metrics.csv")
     if args.num_workers is not None:
         cfg["training"]["num_workers"] = args.num_workers
+    if args.epochs is not None:
+        cfg["training"]["epochs"] = args.epochs
+    if args.lr is not None:
+        cfg["training"]["lr"] = args.lr
+    if args.freeze_clay_encoder is not None:
+        cfg.setdefault("model", {}).setdefault("clay", {})["freeze_encoder"] = args.freeze_clay_encoder
 
     train_cfg = cfg.get("training", {})
 

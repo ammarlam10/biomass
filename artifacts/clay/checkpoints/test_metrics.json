@@ -1,0 +1,18 @@
+{
+  "epoch": 26,
+  "checkpoint": "/workspace/artifacts/clay/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.2276340760423679,
+  "mae_tree_count": 0.21274503253419025,
+  "r2_tree_count": 0.004845663634408748,
+  "rmse_tree_count_orig": 0.6035013855728302,
+  "mae_tree_count_orig": 0.5307995594428615,
+  "r2_tree_count_orig": 0.016740855884331496,
+  "rmse_mean_height": 0.4127859772643947,
+  "mae_mean_height": 0.31984640926429053,
+  "r2_mean_height": 0.10692112615507243,
+  "rmse_mean_height_orig": 7.790755703284484,
+  "mae_mean_height_orig": 6.377585773214222,
+  "r2_mean_height_orig": 0.1271625194884206,
+  "support_ratio": 0.2676974429652609
+}

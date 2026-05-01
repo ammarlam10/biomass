@@ -216,14 +216,18 @@ class Trainer:
                         if self.amp:
                             self.scaler.unscale_(self.optimizer)
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                            # GradScaler may skip optimizer.step() on inf/NaN grads; only
+                            # then call lr_scheduler.step() after a real step (PyTorch warning).
+                            scale_before = self.scaler.get_scale()
                             self.scaler.step(self.optimizer)
                             self.scaler.update()
+                            optimizer_stepped = self.scaler.get_scale() >= scale_before
                         else:
                             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                             self.optimizer.step()
+                            optimizer_stepped = True
                         # PyTorch requires: optimizer.step() → scheduler.step() → zero_grad()
-                        # (calling zero_grad() between optimizer and scheduler triggers a warning)
-                        if self._scheduler is not None:
+                        if self._scheduler is not None and optimizer_stepped:
                             self._scheduler.step()
                         self.optimizer.zero_grad()
                         self.global_step += 1

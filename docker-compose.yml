@@ -51,7 +51,7 @@ x-gpu-two: &gpu_two
 
 x-volumes: &volumes
   volumes:
-    - /work/ammar/sslrp/data/biomass:/data:ro         # dataset – read-only
+    - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro   # zarr dataset (inputs/, labels/, parquet)
     - /work/ammar/sslrp/biomass:/workspace             # source code
     - /work/ammar/sslrp/biomass/artifacts:/workspace/artifacts  # outputs
 
@@ -241,7 +241,48 @@ services:
         --checkpoint /workspace/artifacts/segformer/checkpoints/best.pt
         --split val
 
-  # ── 14. Compare all models (UNet vs XGBoost vs SegFormer) ────────────────────
+  # ── 14. SegFormer-B3 train – single GPU ──────────────────────────────────────
+  train_segformer_b3:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '16g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train.py
+        --config configs/segformer_b3.yaml
+        --run-dir /workspace/artifacts/segformer_b3
+
+  # ── 15. SegFormer-B3 evaluate – test split ────────────────────────────────────
+  eval_segformer_b3:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/segformer_b3.yaml
+        --checkpoint /workspace/artifacts/segformer_b3/checkpoints/best.pt
+        --split test
+
+  # ── 16. SegFormer-B3 evaluate – val split ─────────────────────────────────────
+  eval_segformer_b3_val:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/segformer_b3.yaml
+        --checkpoint /workspace/artifacts/segformer_b3/checkpoints/best.pt
+        --split val
+
+  # ── 17. Compare all models (UNet vs XGBoost vs SegFormer) ────────────────────
   #   Reads test_metrics.json files produced by each model's eval service.
   #   Run after eval, eval_xgboost, and eval_segformer have completed.
   #   Override --format for CSV or JSON output:
@@ -260,3 +301,33 @@ services:
         --unet      /workspace/artifacts/checkpoints/test_metrics.json
         --xgb       /workspace/artifacts/test_metrics_xgboost.json
         --segformer /workspace/artifacts/segformer/checkpoints/test_metrics.json
+        --run "SegFormer-B3" /workspace/artifacts/segformer_b3/checkpoints/test_metrics.json
+
+  # ── 18. Clay adapter smoke test ───────────────────────────────────────────────
+  #   Validates Clay adapter forward pass, shape, no-NaN, gradient flow.
+  #   Uses random-init encoder — no checkpoint required.
+  #   Mounts the live code dir so the image need not be rebuilt for code changes.
+  smoke_clay:
+    build: .
+    image: biomass:latest
+    <<: *gpu_single
+    volumes:
+      - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro
+      - /data/ammar/biomass:/workspace          # live source code
+    shm_size: '4g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: python scripts/smoke_test_clay.py
+
+  # ── 19. Clay adapter train — Phase 1 (frozen encoder, head warm-up) ──────────
+  train_clay:
+    build: .
+    image: biomass:latest
+    <<: [*gpu_single, *volumes]
+    shm_size: '16g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train.py
+        --config configs/clay.yaml
+        --run-dir /workspace/artifacts/clay

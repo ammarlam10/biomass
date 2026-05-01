@@ -1,7 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# XGBoost baseline – scripts/train_xgboost.py, scripts/evaluate_xgboost.py
-# Shares the same `data` block as UNet for comparable metrics.
-# Paths assume Docker mounts: dataset → /data/ammar/4g.zarr, code → /workspace
+# Benchmark config: XGBoost baseline  (3-seed reproducibility study)
+#
+# Data block is identical to the DL benchmark configs so metrics are comparable.
+# save_dir is overridden at launch via --save-dir CLI flag to produce
+# per-seed artifacts: /workspace/artifacts/benchmark/xgb/seed_<S>/
+#
+# Paths use Docker mounts:
+#   dataset → /data/ammar/4g.zarr  (read-only)
+#   code    → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
@@ -23,15 +29,14 @@ data:
 
   norm_stats_path: /workspace/artifacts/norm_stats.json
 
-# Seed for XGBoost random_state and pixel subsampling (scripts/train_xgboost.py).
+# Seed for XGBoost random_state and pixel subsampling.
+# Overridden per run via --seed CLI flag.
 training:
   seed: 42
 
 # ─── XGBoost ──────────────────────────────────────────────────────────────────
 xgboost:
   feature_mode: pixel
-  # Higher than 0.01 feeds more pixels per patch into training (better signal for
-  # mean_height); increase further if RAM allows, reduce if OOM.
   subsample_pixels: 0.03
 
   n_estimators: 2000
@@ -41,7 +46,9 @@ xgboost:
   colsample_bytree: 0.8
   min_child_weight: 5
   tree_method: hist
-  device: cuda              # set to "cpu" if no GPU
+  device: cuda              # GPU 0 inside container (host GPU 4 via docker --gpus)
   early_stopping_rounds: 40
 
-  save_dir: /workspace/artifacts
+  # Overridden at launch via --save-dir; this fallback is never used by the
+  # benchmark runner scripts.
+  save_dir: /workspace/artifacts/benchmark/xgb/seed_42

@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clay v1.5 foundation model adapter – training / evaluation config
+#
+# Path notes (Docker vs host):
+#   Inside container  : /workspace  → /work/ammar/sslrp/biomass
+#                       /data/ammar/4g.zarr  (dataset, read-only)
+#   On host directly  : replace /workspace with /data/ammar/biomass
+#
+# Training phases (switch manually + --resume between phases):
+#   Phase 1 – freeze_encoder: true,  lr 1e-4  (head + species branch only)
+#   Phase 2 – freeze_encoder: false, lr 5e-5 (single AdamW on all parameters;
+#             no per-module LR in config — use 1e-5 if training is unstable)
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  root: /data/ammar/4g.zarr
+  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]   # 4 × 2 bands = 8 ch
+  s2_seasons: [summer, autumn, spring, winter]   # 4 × 10 bands = 40 ch
+  use_species: true                              # 1 ch side-branch (non-spectral)
+
+  valid_mask_mode: notnull
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  # Must be computed with the same data.* settings above before training.
+  # Run: python scripts/compute_stats.py --config configs/clay.yaml
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: clay_adapter
+
+  clay:
+    # Path to Clay v1.5 Lightning checkpoint (downloaded from HuggingFace).
+    # Default: repo artifacts (same mount as norm_stats when /data/ammar/biomass → /workspace).
+    # wget -O artifacts/checkpoints/clay-v1.5.ckpt \
+    #   https://huggingface.co/made-with-clay/Clay/resolve/main/v1.5/clay-v1.5.ckpt
+    ckpt_path: /workspace/artifacts/checkpoints/clay-v1.5.ckpt
+
+    # Clay's own normalization / wavelength metadata (vendored in repo).
+    metadata_path: /workspace/configs/clay_metadata.yaml
+
+    # Phase 1: true  → only head + species branch train  (~few M params)
+    # Phase 2: false → unfreeze encoder for full fine-tune (~311M params); resume from Phase 1 ckpt
+    freeze_encoder: false
+
+    # Channels in the species side-branch output at 16×16
+    species_feat_dim: 32
+
+# ─── Training ─────────────────────────────────────────────────────────────────
+training:
+  seed: 42
+  deterministic: false
+  cudnn_benchmark: true
+  ddp: false
+
+  # ── Batch / DataLoader ──────────────────────────────────────────────────────
+  # Clay ViT-Large encoder ≈ 1.25 GB. At 128×128 with AMP:
+  #   V100S 32 GB → batch_size 8 is comfortable (Phase 1 frozen)
+  #                 batch_size 4 for Phase 2 unfrozen with head activations
+  #   P100  16 GB → batch_size 2 + gradient_accumulation_steps 4
+  batch_size: 16
+  num_workers: 8
+  prefetch_factor: 2
+  pin_memory: true
+
+  epochs: 10        # Set shorter for Phase 1 only; Phase 2 can use same or new --run-dir
+
+  # Single AdamW LR for all trainable params. Phase 1: use 1e-4 with freeze_encoder: true.
+  # Phase 2 (full model): 5e-5 is a typical default; try 1e-5 if loss spikes / unstable.
+  lr: 5.0e-5
+  weight_decay: 1.0e-4
+
+  scheduler: cosine
+
+  loss: masked_smooth_l1
+  loss_weights:
+    tree_count: 1.0
+    mean_height: 1.0
+
+  gradient_accumulation_steps: 1
+  amp: true
+
+  save_dir: /workspace/artifacts/clay/checkpoints
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  tensorboard_dir: /workspace/artifacts/clay/runs
+  csv_path: /workspace/artifacts/clay/metrics.csv
+  log_every_n_steps: 10

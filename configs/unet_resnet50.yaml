@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # UNet + ResNet50 encoder – training / evaluation config
 # Paths assume Docker mounts:
-#   data  → /data    (read-only)
-#   code  → /workspace
+#   dataset → /data/ammar/4g.zarr  (read-only; zarr group with inputs/, labels/, parquet)
+#   code    → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data
-  split_file: /data/patch_index_subset.parquet
+  root: /data/ammar/4g.zarr
+  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
 
   # Column names in the parquet file.
   # Run `scripts/compute_stats.py --inspect` to print available columns if
@@ -55,7 +55,7 @@ training:
 
   # ── Batch / DataLoader ──────────────────────────────────────────────────────
   # Tuned for V100S 32GB. Reduce batch_size to 16 if using P100 16GB.
-  batch_size: 32
+  batch_size: 64
   # 12 workers saturates ~1 NUMA node (12 physical cores) without cross-NUMA
   # overhead. Use 8 on P100 nodes or if you observe no gain past that point.
   num_workers: 12

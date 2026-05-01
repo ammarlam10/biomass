@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Benchmark config: SegFormer-B3  (3-seed reproducibility study)
+#
+# Changes vs configs/segformer_b3.yaml:
+#   - training.epochs: 60   (benchmark budget; was 100)
+#   - save_dir / logging: neutral paths (always overridden via --run-dir)
+#
+# Paths use Docker mounts:
+#   dataset  → /data/ammar/4g.zarr  (read-only)
+#   code     → /workspace
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  root: /data/ammar/4g.zarr
+  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]   # 4 × 2 bands = 8 ch
+  s2_seasons: [summer, autumn, spring, winter]   # 4 × 10 bands = 40 ch
+  use_species: true
+
+  valid_mask_mode: notnull
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: vit_segmentation
+
+  vit:
+    encoder_name: pvt_v2_b3
+    embed_dim: 256
+    pretrained: true
+
+  unet:    {}
+  prithvi: {}
+
+# ─── Training ─────────────────────────────────────────────────────────────────
+training:
+  seed: 42             # overridden per run via --seed CLI flag
+  deterministic: false
+  cudnn_benchmark: true
+  ddp: false
+
+  batch_size: 8
+  num_workers: 12
+  prefetch_factor: 2
+  pin_memory: true
+
+  epochs: 60
+  lr: 6.0e-5
+  weight_decay: 1.0e-2
+
+  scheduler: cosine
+  loss: masked_smooth_l1
+
+  loss_weights:
+    tree_count: 1.0
+    mean_height: 1.0
+
+  gradient_accumulation_steps: 1
+  amp: true
+
+  save_dir: /workspace/artifacts/benchmark/segformer_b3/seed_42/checkpoints
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  tensorboard_dir: /workspace/artifacts/benchmark/segformer_b3/seed_42/runs
+  csv_path: /workspace/artifacts/benchmark/segformer_b3/seed_42/metrics.csv
+  log_every_n_steps: 10

@@ -1,5 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# SegFormer (MiT-B2) dense regression – training / evaluation config
+# SegFormer-B3 style dense regression
+# Encoder: PVTv2-B3 (~45 M params, deeper than B2's ~25 M)
+# Decoder: All-MLP head, embed_dim=256 (same as B2 / SegFormer paper)
+#
+# PVTv2-B3 stage widths: [64, 128, 320, 512] — identical to B2; the decoder
+# architecture is therefore unchanged from segformer.yaml.
+#
 # Paths assume Docker mounts:
 #   dataset → /data/ammar/4g.zarr  (read-only)
 #   code    → /workspace
@@ -9,19 +15,15 @@ data:
   root: /data/ammar/4g.zarr
   split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
 
-  # Column names in the parquet file.
-  split_column: split        # values expected: train / val / test
+  split_column: split
   patch_idx_column: zarr_idx
 
-  # Which input modalities to use
   s1_seasons: [summer, autumn, spring, winter]   # 4 × 2 bands = 8 ch
   s2_seasons: [summer, autumn, spring, winter]   # 4 × 10 bands = 40 ch
   use_species: true                              # +1 ch → 49 total
 
-  # Validity mask strategy
   valid_mask_mode: notnull
 
-  # Per-target transforms applied before loss (inverse applied at eval time)
   target_transform:
     tree_count: log1p
     mean_height: log1p
@@ -30,52 +32,38 @@ data:
 
 # ─── Model ────────────────────────────────────────────────────────────────────
 model:
-  # Registry key → vit_segmentation resolves to SegFormerRegressor
   name: vit_segmentation
 
   vit:
-    # timm hierarchical ViT encoder (features_only, 4 scales).
-    # mit_b* (SegFormer MiT) is NOT registered in timm 1.0.x shipped with this
-    # image; use PVTv2 instead — same [64,128,320,512] stage widths as MiT-B2.
-    #   pvt_v2_b1 – lighter
-    #   pvt_v2_b2 – default (~25M), good match to UNet+ResNet50 scale
-    #   pvt_v2_b3 – heavier
-    encoder_name: pvt_v2_b2
-    embed_dim: 256            # MLP decoder projection width
-    pretrained: true          # load ImageNet-pretrained MiT weights
+    encoder_name: pvt_v2_b3   # ~45 M params, 4 scales [64,128,320,512]
+    embed_dim: 256             # MLP decoder width (same as B2)
+    pretrained: true
 
-  unet:    {}  # unused
-  prithvi: {}  # unused
+  unet:    {}
+  prithvi: {}
 
 # ─── Training ─────────────────────────────────────────────────────────────────
 training:
   seed: 42
   deterministic: false
 
-  # ── Batch / DataLoader ──────────────────────────────────────────────────────
-  # PVTv2-B2 uses more memory than UNet at the same batch size.
-  # 16 fits comfortably on a V100S 32GB; increase to 24 if memory allows.
-  batch_size: 64
+  # PVTv2-B3 is ~80 % heavier than B2 per forward pass.
+  # 8 fits on a V100S 32 GB with AMP; raise to 12 only after profiling memory.
+  batch_size: 8
   num_workers: 12
   prefetch_factor: 2
   pin_memory: true
 
-  # ── GPU / Distributed ───────────────────────────────────────────────────────
   cudnn_benchmark: true
   ddp: false
 
   epochs: 100
-  # SegFormer canonical LR is lower than CNNs; 6e-5 is standard for MiT-B2.
   lr: 6.0e-5
   weight_decay: 1.0e-2
 
-  # Scheduler: cosine | onecycle | none
   scheduler: cosine
-
-  # Loss: masked_mse | masked_smooth_l1 | masked_mae
   loss: masked_smooth_l1
 
-  # Per-target loss weighting
   loss_weights:
     tree_count: 1.0
     mean_height: 1.0
@@ -83,10 +71,10 @@ training:
   gradient_accumulation_steps: 1
   amp: true
 
-  save_dir: /workspace/artifacts/segformer/checkpoints
+  save_dir: /workspace/artifacts/segformer_b3/checkpoints
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging:
-  tensorboard_dir: /workspace/artifacts/segformer/runs
-  csv_path: /workspace/artifacts/segformer/metrics.csv
+  tensorboard_dir: /workspace/artifacts/segformer_b3/runs
+  csv_path: /workspace/artifacts/segformer_b3/metrics.csv
   log_every_n_steps: 10
