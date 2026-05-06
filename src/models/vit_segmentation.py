@@ -154,9 +154,11 @@ class SegFormerRegressor(nn.Module):
 @register_model("vit_segmentation")
 def build_vit_segmentation(cfg: dict, num_input_channels: int) -> nn.Module:
     vit_cfg = cfg.get("model", {}).get("vit", {})
+    targets = cfg.get("data", {}).get("targets", ["tree_count", "mean_height"])
     return SegFormerRegressor(
         in_channels=num_input_channels,
         encoder_name=vit_cfg.get("encoder_name", "pvt_v2_b2"),
         embed_dim=int(vit_cfg.get("embed_dim", 256)),
         pretrained=bool(vit_cfg.get("pretrained", True)),
+        num_targets=len(targets),
     )

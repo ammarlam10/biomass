@@ -1,0 +1,12 @@
+{
+  "epoch": 60,
+  "checkpoint": "/workspace/artifacts/experiments/singletask_height_unet/seed_80/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_mean_height": 0.31197544399251337,
+  "mae_mean_height": 0.2337110477587527,
+  "r2_mean_height": 0.4898701132984191,
+  "rmse_mean_height_orig": 5.953944264952313,
+  "mae_mean_height_orig": 4.5991217424357025,
+  "r2_mean_height_orig": 0.49021888338579367,
+  "support_ratio": 0.2674509101900561
+}

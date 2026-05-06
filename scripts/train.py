@@ -78,6 +78,30 @@ def parse_args() -> argparse.Namespace:
         help="Override training.epochs from config.",
     )
     p.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=int,
+        default=None,
+        help="Override training.batch_size from config.",
+    )
+    p.add_argument(
+        "--validate-every",
+        dest="validate_every_n_epochs",
+        type=int,
+        default=None,
+        help="Override training.validate_every_n_epochs (val run every N epochs; 1 = every epoch).",
+    )
+    p.add_argument(
+        "--early-stopping-patience",
+        dest="early_stopping_patience",
+        type=int,
+        default=None,
+        help=(
+            "Override training.early_stopping_patience (epochs without val improvement); "
+            "0 disables early stopping."
+        ),
+    )
+    p.add_argument(
         "--lr",
         type=float,
         default=None,
@@ -153,6 +177,12 @@ def main() -> None:
         cfg["training"]["num_workers"] = args.num_workers
     if args.epochs is not None:
         cfg["training"]["epochs"] = args.epochs
+    if args.batch_size is not None:
+        cfg["training"]["batch_size"] = args.batch_size
+    if args.validate_every_n_epochs is not None:
+        cfg["training"]["validate_every_n_epochs"] = args.validate_every_n_epochs
+    if args.early_stopping_patience is not None:
+        cfg["training"]["early_stopping_patience"] = args.early_stopping_patience
     if args.lr is not None:
         cfg["training"]["lr"] = args.lr
     if args.freeze_clay_encoder is not None:

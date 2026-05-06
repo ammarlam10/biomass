@@ -8,13 +8,18 @@ Input channel layout (deterministic, matches norm_stats channel order):
           data; compute_stats uses identity norm (mean 0, std 1) so values are
           unchanged after ``(x - mean) / std``.
 
-Targets:
-  channel 0 – tree_count  (optionally log1p-transformed)
-  channel 1 – mean_height (optionally log1p-transformed)
+Targets (configurable via ``data.targets``):
+  Default: ["tree_count", "mean_height"]  → y shape [2, 128, 128]
+  Single-task examples:
+    ["mean_height"]  → y shape [1, 128, 128]
+    ["tree_count"]   → y shape [1, 128, 128]
+
+  Both zarr arrays are always loaded to build valid_mask (mask is driven by
+  isfinite(mean_height) regardless of which targets are requested).
 
 Returns (x, y, valid_mask):
   x          – float32 tensor [C, 128, 128], normalised, NaN→0
-  y          – float32 tensor [2, 128, 128], fill NaN→0 (masked in loss)
+  y          – float32 tensor [N_t, 128, 128], fill NaN→0 (masked in loss)
   valid_mask – bool tensor    [128, 128]
 """
 
@@ -34,6 +39,9 @@ S1_SEASONS: List[str] = ["summer", "autumn", "spring", "winter"]
 S2_SEASONS: List[str] = ["summer", "autumn", "spring", "winter"]
 S1_BANDS: List[str] = ["VV", "VH"]
 S2_BANDS: List[str] = ["B2", "B3", "B4", "B8", "B5", "B6", "B7", "B8A", "B11", "B12"]
+
+# ── supported target names (order defines channel index in the dual-task case) ─
+ALL_TARGETS: List[str] = ["tree_count", "mean_height"]
 
 
 def build_channel_names(
@@ -84,6 +92,15 @@ class BiomassDataset(Dataset):
         self.use_species: bool = data_cfg.get("use_species", True)
         self.valid_mask_mode: str = data_cfg.get("valid_mask_mode", "notnull")
         self.target_transform: Dict = data_cfg.get("target_transform", {})
+
+        # Which targets to include in y. Both zarr arrays are always opened to
+        # build valid_mask; only the requested subset is stacked into y.
+        self.targets: List[str] = list(data_cfg.get("targets", ALL_TARGETS))
+        for t in self.targets:
+            if t not in ALL_TARGETS:
+                raise ValueError(
+                    f"Unknown target '{t}'. Supported: {ALL_TARGETS}"
+                )
 
         # ── load patch indices for this split ─────────────────────────────────
         split_file = data_cfg.get("split_file", str(self.root / "patch_index_subset.parquet"))
@@ -164,7 +181,11 @@ class BiomassDataset(Dataset):
         if self.target_transform.get("mean_height") == "log1p":
             mh_safe = np.log1p(np.maximum(mh_safe, 0.0))
 
-        y = np.stack([tc_safe, mh_safe], axis=0).astype(np.float32)  # [2, H, W]
+        # Stack only the requested target channels into y [N_t, H, W]
+        _target_arrays = {"tree_count": tc_safe, "mean_height": mh_safe}
+        y = np.stack(
+            [_target_arrays[t] for t in self.targets], axis=0
+        ).astype(np.float32)
 
         x_t = torch.from_numpy(x)
         y_t = torch.from_numpy(y)

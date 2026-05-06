@@ -88,6 +88,9 @@ training:
   gradient_accumulation_steps: 1
   amp: true                    # automatic mixed precision (requires CUDA)
 
+  validate_every_n_epochs: 5   # run validation every N epochs (train still every epoch)
+  early_stopping_patience: 10    # stop if no val RMSE improvement for this many training epochs; 0 = disable
+
   save_dir: /workspace/artifacts/checkpoints
 
 # ─── Logging ──────────────────────────────────────────────────────────────────

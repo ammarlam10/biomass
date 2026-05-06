@@ -1,0 +1,18 @@
+{
+  "epoch": 46,
+  "checkpoint": "/workspace/artifacts/benchmark/unet/seed_456/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.2254019119118076,
+  "mae_tree_count": 0.2038639577124233,
+  "r2_tree_count": 0.024266803564899186,
+  "rmse_tree_count_orig": 0.6040510245009614,
+  "mae_tree_count_orig": 0.5105281302807054,
+  "r2_tree_count_orig": 0.014949033639290565,
+  "rmse_mean_height": 0.3114638158703156,
+  "mae_mean_height": 0.2348247187331722,
+  "r2_mean_height": 0.49154192938851393,
+  "rmse_mean_height_orig": 5.9704038547158325,
+  "mae_mean_height_orig": 4.624912619286368,
+  "r2_mean_height_orig": 0.48739642291968754,
+  "support_ratio": 0.27053467678220083
+}

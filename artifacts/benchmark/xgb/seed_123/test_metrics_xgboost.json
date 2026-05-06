@@ -1,0 +1,21 @@
+{
+  "n_patches": 1853,
+  "n_pixels": 8119453,
+  "feature_mode": "pixel",
+  "model_tc": "/workspace/artifacts/benchmark/xgb/seed_123/xgb_tree_count.json",
+  "model_mh": "/workspace/artifacts/benchmark/xgb/seed_123/xgb_mean_height.json",
+  "metrics": {
+    "rmse_tree_count": 0.22365619087458308,
+    "mae_tree_count": 0.20423102378845215,
+    "r2_tree_count": 0.03932226316355847,
+    "rmse_tree_count_orig": 0.596218499045292,
+    "mae_tree_count_orig": 0.5111803412437439,
+    "r2_tree_count_orig": 0.04032886720875806,
+    "rmse_mean_height": 0.336189630063045,
+    "mae_mean_height": 0.2604525089263916,
+    "r2_mean_height": 0.40760885308663464,
+    "rmse_mean_height_orig": 6.604777439245978,
+    "mae_mean_height_orig": 5.179111957550049,
+    "r2_mean_height_orig": 0.3726779514159476
+  }
+}

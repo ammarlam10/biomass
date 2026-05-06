@@ -1,0 +1,18 @@
+{
+  "epoch": 31,
+  "checkpoint": "/workspace/artifacts/benchmark/segformer_b3/seed_42/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.224473238349096,
+  "mae_tree_count": 0.202932035920172,
+  "r2_tree_count": 0.03229043510437246,
+  "rmse_tree_count_orig": 0.6029359924670705,
+  "mae_tree_count_orig": 0.5084306965318682,
+  "r2_tree_count_orig": 0.01858233476969129,
+  "rmse_mean_height": 0.3050798249740852,
+  "mae_mean_height": 0.22634805771069647,
+  "r2_mean_height": 0.5121717773291061,
+  "rmse_mean_height_orig": 5.815895411516839,
+  "mae_mean_height_orig": 4.447737887735514,
+  "r2_mean_height_orig": 0.5135845171666104,
+  "support_ratio": 0.2680268385286989
+}

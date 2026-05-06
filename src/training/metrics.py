@@ -1,12 +1,14 @@
 """
 Pixel-wise regression metrics computed only on valid (masked) pixels.
 
-Target names: tree_count (index 0), mean_height (index 1).
+Default target names: ["tree_count", "mean_height"] (indices 0, 1).
+For single-task experiments pass target_names=["mean_height"] or
+target_names=["tree_count"] to RunningMetrics and get_inverse_transforms.
 
 Two usage modes:
 
 1. Batch-at-a-time streaming (preferred for large val sets – no memory spike):
-       rm = RunningMetrics(inv_transforms)
+       rm = RunningMetrics(inv_transforms, target_names=["mean_height"])
        for pred, target, mask in loader:
            rm.update(pred, target, mask)
        metrics = rm.compute()
@@ -26,12 +28,16 @@ from typing import Callable, Dict, List, Optional
 import torch
 
 
+# Canonical dual-task ordering; used as the default everywhere.
 TARGET_NAMES: List[str] = ["tree_count", "mean_height"]
 
 # Upper clamp in log1p-space before expm1 when mapping to original units for metrics.
 # Prevents overflow from unconstrained regression tails / fp16 noise (expm1 grows fast).
 # Values are generous vs. dataset max (count≈8, height≈54 m).
-_LOG1P_INV_MAX: tuple[float, float] = (math.log1p(64.0), math.log1p(128.0))
+_LOG1P_INV_MAX: dict[str, float] = {
+    "tree_count":  math.log1p(64.0),
+    "mean_height": math.log1p(128.0),
+}
 
 
 def _inverse_log1p_stable(log_max: float) -> Callable[[torch.Tensor], torch.Tensor]:
@@ -49,20 +55,39 @@ class RunningMetrics:
     targets (for R²), and pixel count — all in float64 on CPU.
     Memory cost: O(n_targets) rather than O(n_patches × H × W).
 
+    Args:
+        inverse_transforms : list of callables (one per target) or None elements;
+                             length must match ``target_names``.
+        target_names       : ordered list of target names corresponding to pred
+                             channels. Defaults to ["tree_count", "mean_height"].
+
     Usage:
-        rm = RunningMetrics(inv_transforms)
+        rm = RunningMetrics(inv_transforms, target_names=["mean_height"])
         for pred, target, mask in val_batches:
             rm.update(pred.cpu(), target.cpu(), mask.cpu())
         metrics = rm.compute()
         rm.reset()
     """
 
-    def __init__(self, inverse_transforms: Optional[List[Optional[Callable]]] = None) -> None:
-        self._inv_transforms = inverse_transforms or [None] * len(TARGET_NAMES)
+    def __init__(
+        self,
+        inverse_transforms: Optional[List[Optional[Callable]]] = None,
+        target_names: Optional[List[str]] = None,
+    ) -> None:
+        self._target_names: List[str] = list(target_names or TARGET_NAMES)
+        n = len(self._target_names)
+        if inverse_transforms is None:
+            inverse_transforms = [None] * n
+        if len(inverse_transforms) != n:
+            raise ValueError(
+                f"inverse_transforms length {len(inverse_transforms)} != "
+                f"target_names length {n}"
+            )
+        self._inv_transforms = inverse_transforms
         self.reset()
 
     def reset(self) -> None:
-        n = len(TARGET_NAMES)
+        n = len(self._target_names)
         # transformed-space accumulators
         self._sse = [0.0] * n        # sum of squared errors
         self._sae = [0.0] * n        # sum of absolute errors
@@ -86,12 +111,12 @@ class RunningMetrics:
         Accumulate one batch.
 
         Args:
-            pred   : [B, 2, H, W]
-            target : [B, 2, H, W]
+            pred   : [B, N_t, H, W]
+            target : [B, N_t, H, W]
             mask   : [B, H, W] bool
         """
         with torch.no_grad():
-            for i in range(len(TARGET_NAMES)):
+            for i in range(len(self._target_names)):
                 p = pred[:, i][mask].double()
                 t = target[:, i][mask].double()
                 n = p.numel()
@@ -116,7 +141,7 @@ class RunningMetrics:
 
     def compute(self) -> Dict[str, float]:
         results: Dict[str, float] = {}
-        for i, name in enumerate(TARGET_NAMES):
+        for i, name in enumerate(self._target_names):
             n = self._cnt[i]
             if n == 0:
                 results[f"rmse_{name}"] = float("nan")
@@ -150,23 +175,27 @@ def compute_masked_metrics(
     target: torch.Tensor,
     mask: torch.Tensor,
     inverse_transforms: Optional[List[Optional[Callable]]] = None,
+    target_names: Optional[List[str]] = None,
 ) -> Dict[str, float]:
     """
     Args:
-        pred               : [B, 2, H, W]  or accumulated stack
-        target             : [B, 2, H, W]
+        pred               : [B, N_t, H, W]  or accumulated stack
+        target             : [B, N_t, H, W]
         mask               : [B, H, W] bool
         inverse_transforms : list of callables (one per target) or None;
                              used to compute metrics in original scale
+        target_names       : ordered list matching pred channels
+                             (default: ["tree_count", "mean_height"])
 
     Returns:
         dict with keys  rmse_{name}, mae_{name}, r2_{name}
         and optionally  rmse_{name}_orig, mae_{name}_orig, r2_{name}_orig
     """
+    names = list(target_names or TARGET_NAMES)
     results: Dict[str, float] = {}
 
     with torch.no_grad():
-        for i, name in enumerate(TARGET_NAMES):
+        for i, name in enumerate(names):
             p = pred[:, i][mask]    # [N_valid]
             t = target[:, i][mask]  # [N_valid]
 
@@ -204,20 +233,28 @@ def _single_target_metrics(p: torch.Tensor, t: torch.Tensor, name: str) -> Dict[
     }
 
 
-def get_inverse_transforms(cfg: dict) -> List[Optional[Callable]]:
+def get_inverse_transforms(
+    cfg: dict,
+    target_names: Optional[List[str]] = None,
+) -> List[Optional[Callable]]:
     """
     Build inverse-transform callables matching target_transform config.
-    Order: [tree_count, mean_height]
+
+    Args:
+        cfg          : full config dict
+        target_names : ordered target list (default: ["tree_count","mean_height"])
 
     log1p inverses clamp before expm1 so RMSE/MAE in original units stay finite when
     predictions leave the physical range (common under AMP or heavy tails).
     """
+    names = list(target_names or TARGET_NAMES)
     tt = cfg.get("data", {}).get("target_transform", {})
     result: List[Optional[Callable[[torch.Tensor], torch.Tensor]]] = []
-    for i, name in enumerate(TARGET_NAMES):
+    for name in names:
         mode = tt.get(name, "none")
         if mode == "log1p":
-            result.append(_inverse_log1p_stable(_LOG1P_INV_MAX[i]))
+            log_max = _LOG1P_INV_MAX.get(name, math.log1p(128.0))
+            result.append(_inverse_log1p_stable(log_max))
         else:
             result.append(None)
     return result

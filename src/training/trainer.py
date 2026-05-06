@@ -7,6 +7,8 @@ Supports:
   - Mixed precision (AMP)
   - Gradient accumulation
   - Streaming validation metrics (RunningMetrics – no end-of-epoch cat)
+  - Optional sparse validation (``validate_every_n_epochs``) and early stopping
+    on combined val RMSE (``early_stopping_patience`` training epochs without improvement)
 
 Model contract: forward(x: [B,C,H,W]) → [B,2,H,W]
 DataLoader contract: yields (x, y, valid_mask)
@@ -21,7 +23,7 @@ import csv
 import json
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 import torch
 import torch.distributed as dist
@@ -33,7 +35,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from src.losses.masked_regression import MaskedRegressionLoss, build_loss
-from src.training.metrics import RunningMetrics, get_inverse_transforms
+from src.training.metrics import RunningMetrics, get_inverse_transforms, TARGET_NAMES
 
 
 class Trainer:
@@ -59,6 +61,20 @@ class Trainer:
         self.epochs: int = train_cfg.get("epochs", 100)
         self.grad_accum: int = max(1, train_cfg.get("gradient_accumulation_steps", 1))
         self.log_every: int = log_cfg.get("log_every_n_steps", 10)
+
+        # Validation frequency (1 = every epoch). Checkpoint selection uses val metrics.
+        # Default: every 5 epochs (skip val on other epochs for speed).
+        ve = int(train_cfg.get("validate_every_n_epochs", 5))
+        self.validate_every_n_epochs: int = max(1, ve)
+
+        # Early stopping: stop if no val improvement for this many *training* epochs
+        # since the last best val checkpoint. None / 0 disables.
+        # Default: 10 epochs for paper / experiment runs.
+        esp = train_cfg.get("early_stopping_patience", 10)
+        self.early_stopping_patience: Optional[int] = (
+            None if esp is None or int(esp) <= 0 else int(esp)
+        )
+        self._best_epoch_for_es: Optional[int] = None  # epoch of last val improvement
 
         # ── device & DDP ──────────────────────────────────────────────────────
         self.ddp: bool = local_rank >= 0 and dist.is_available() and dist.is_initialized()
@@ -95,10 +111,15 @@ class Trainer:
         self._scheduler_name: str = train_cfg.get("scheduler", "cosine")
         self._scheduler = None
 
+        # ── active targets (single- or multi-task) ────────────────────────────
+        self._target_names: list = list(
+            cfg.get("data", {}).get("targets", TARGET_NAMES)
+        )
+
         # ── streaming metrics ─────────────────────────────────────────────────
-        inv_transforms = get_inverse_transforms(cfg)
-        self._train_rm = RunningMetrics(inv_transforms)
-        self._val_rm = RunningMetrics(inv_transforms)
+        inv_transforms = get_inverse_transforms(cfg, self._target_names)
+        self._train_rm = RunningMetrics(inv_transforms, target_names=self._target_names)
+        self._val_rm = RunningMetrics(inv_transforms, target_names=self._target_names)
 
         # ── checkpointing ─────────────────────────────────────────────────────
         ckpt_dir = save_dir or train_cfg.get("save_dir", "/workspace/artifacts/checkpoints")
@@ -141,19 +162,49 @@ class Trainer:
                     train_loader.sampler.set_epoch(epoch)
 
                 train_metrics = self._run_epoch(train_loader, epoch, training=True)
-                val_metrics = self._run_epoch(val_loader, epoch, training=False)
 
+                run_val = (
+                    epoch % self.validate_every_n_epochs == 0
+                    or epoch == self.epochs
+                )
+                val_metrics: Optional[Dict[str, float]] = None
+                if run_val:
+                    val_metrics = self._run_epoch(val_loader, epoch, training=False)
+
+                should_stop = False
                 if self.is_main:
-                    val_rmse = self._combined_rmse(val_metrics)
-                    if val_rmse < self.best_val_rmse:
-                        self.best_val_rmse = val_rmse
-                        self._save_checkpoint("best.pt", epoch, val_metrics)
-                        print(f"  [new best] combined_val_rmse={val_rmse:.4f}")
-
-                    self._save_checkpoint("latest.pt", epoch, val_metrics)
+                    ckpt_metrics: Dict[str, Any] = (
+                        dict(val_metrics) if val_metrics else dict(train_metrics)
+                    )
+                    self._save_checkpoint("latest.pt", epoch, ckpt_metrics)
                     self._log_csv(epoch, "train", train_metrics)
-                    self._log_csv(epoch, "val", val_metrics)
+                    if val_metrics is not None:
+                        val_rmse = self._combined_rmse(val_metrics)
+                        if val_rmse == val_rmse and val_rmse < self.best_val_rmse:
+                            self.best_val_rmse = val_rmse
+                            self._best_epoch_for_es = epoch
+                            self._save_checkpoint("best.pt", epoch, val_metrics)
+                            print(f"  [new best] combined_val_rmse={val_rmse:.4f}")
+
+                        self._log_csv(epoch, "val", val_metrics)
+
+                        if self.early_stopping_patience is not None and self._best_epoch_for_es is not None:
+                            stalled = epoch - self._best_epoch_for_es
+                            if stalled >= self.early_stopping_patience:
+                                print(
+                                    f"  [early stopping] no val improvement for {stalled} epochs "
+                                    f"(patience={self.early_stopping_patience}); stopping at epoch {epoch}."
+                                )
+                                should_stop = True
                     self._csv_file.flush()
+
+                stop_flag = torch.zeros(1, dtype=torch.int32, device=self.device)
+                if self.is_main and should_stop:
+                    stop_flag[0] = 1
+                if self.ddp:
+                    dist.broadcast(stop_flag, src=0)
+                if stop_flag.item():
+                    break
 
             # ── post-training test evaluation (writer/CSV still open) ─────────
             if self.is_main and test_loader is not None:
@@ -263,15 +314,15 @@ class Trainer:
                 if k not in ("loss", "support_ratio") and v == v:
                     self.writer.add_scalar(f"{phase}/{k}", v, epoch)
 
+            target_parts = "  ".join(
+                f"rmse_{t[:2]}={metrics.get(f'rmse_{t}', float('nan')):.4f} "
+                f"r2_{t[:2]}={metrics.get(f'r2_{t}', float('nan')):.3f}"
+                for t in self._target_names
+            )
             print(
                 f"  Ep {epoch:3d} [{phase:5s}]  "
                 f"loss={avg_loss:.4f}  "
-                f"rmse_c={metrics.get('rmse_tree_count', float('nan')):.4f}  "
-                f"mae_c={metrics.get('mae_tree_count', float('nan')):.4f}  "
-                f"r2_c={metrics.get('r2_tree_count', float('nan')):.3f}  "
-                f"rmse_h={metrics.get('rmse_mean_height', float('nan')):.4f}  "
-                f"mae_h={metrics.get('mae_mean_height', float('nan')):.4f}  "
-                f"r2_h={metrics.get('r2_mean_height', float('nan')):.3f}  "
+                f"{target_parts}  "
                 f"sup={avg_support:.3f}"
             )
         return metrics
@@ -287,8 +338,8 @@ class Trainer:
         if model is None:
             model = self.model.module if isinstance(self.model, DDP) else self.model
 
-        inv_transforms = get_inverse_transforms(self.cfg)
-        rm = RunningMetrics(inv_transforms)
+        inv_transforms = get_inverse_transforms(self.cfg, self._target_names)
+        rm = RunningMetrics(inv_transforms, target_names=self._target_names)
         total_support = 0.0
         n_batches = 0
 
@@ -360,11 +411,13 @@ class Trainer:
         print(f"  Note: *_orig uses clamped expm1 (no overflow from regression tails).")
         print(f"{'─' * W}")
 
-        targets = [
-            ("tree_count",  "count", "log1p-count",  "trees"),
-            ("mean_height", "height", "log1p-height", "m"),
-        ]
-        for tgt, short, label_log, unit in targets:
+        _unit_map = {"tree_count": "trees", "mean_height": "m"}
+        _label_map = {"tree_count": "log1p-count", "mean_height": "log1p-height"}
+
+        for tgt in self._target_names:
+            label_log = _label_map.get(tgt, f"log1p-{tgt}")
+            unit = _unit_map.get(tgt, "")
+
             rmse = metrics.get(f"rmse_{tgt}", float("nan"))
             mae  = metrics.get(f"mae_{tgt}",  float("nan"))
             r2   = metrics.get(f"r2_{tgt}",   float("nan"))
@@ -372,9 +425,7 @@ class Trainer:
             r2_str = f"{r2:.4f}"
             # R² near or below 0 on tree_count is expected: on valid (tree) pixels
             # tree_count is 1–8 with median=1, giving tiny SS_tot ≈ RMSE² → R² ≈ 0.
-            # It signals "model is near the mean-predictor level" for this metric, not
-            # a model failure — prefer RMSE/MAE for tree_count.
-            if r2 < 0.05:
+            if tgt == "tree_count" and r2 < 0.05:
                 r2_str += "  ← low (see note)"
 
             print(f"\n  {label_log} space:")
@@ -387,14 +438,14 @@ class Trainer:
                 print(f"  original scale ({unit}):")
                 print(f"    RMSE = {rmse_o:.4f}   MAE = {mae_o:.4f}   R² = {r2_o:.4f}")
 
-        # Explain near-zero R² on tree_count
-        print(f"\n{'─' * W}")
-        print("  Why R²(tree_count) is near/below zero:")
-        print("    On valid (tree) pixels, tree_count = 1–8, median = 1, ~50% of")
-        print("    pixels equal 1. After log1p the target std ≈ 0.26 — nearly the")
-        print("    same magnitude as RMSE. SS_tot is therefore tiny, so R² ≈ 0 even")
-        print("    when RMSE is reasonable. Use RMSE / MAE as the primary metric for")
-        print("    tree_count; R² is unreliable for this near-constant distribution.")
+        if "tree_count" in self._target_names:
+            print(f"\n{'─' * W}")
+            print("  Why R²(tree_count) is near/below zero:")
+            print("    On valid (tree) pixels, tree_count = 1–8, median = 1, ~50% of")
+            print("    pixels equal 1. After log1p the target std ≈ 0.26 — nearly the")
+            print("    same magnitude as RMSE. SS_tot is therefore tiny, so R² ≈ 0 even")
+            print("    when RMSE is reasonable. Use RMSE / MAE as the primary metric for")
+            print("    tree_count; R² is unreliable for this near-constant distribution.")
         print(f"{'─' * W}\n")
 
     # ── helpers ───────────────────────────────────────────────────────────────
@@ -415,13 +466,17 @@ class Trainer:
         else:
             self._scheduler = None
 
-    @staticmethod
-    def _combined_rmse(metrics: Dict[str, float]) -> float:
-        tc = metrics.get("rmse_tree_count", float("inf"))
-        mh = metrics.get("rmse_mean_height", float("inf"))
-        if tc != tc or mh != mh:
+    def _combined_rmse(self, metrics: Dict[str, float]) -> float:
+        """Average RMSE over all active targets. Works for 1 or 2 targets."""
+        values = []
+        for t in self._target_names:
+            v = metrics.get(f"rmse_{t}", float("inf"))
+            if v != v:   # NaN check
+                return float("inf")
+            values.append(v)
+        if not values:
             return float("inf")
-        return (tc + mh) / 2.0
+        return sum(values) / len(values)
 
     def _save_checkpoint(self, filename: str, epoch: int, metrics: Dict) -> None:
         path = self.save_dir / filename
@@ -441,14 +496,12 @@ class Trainer:
     def _open_csv(self) -> None:
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self._csv_file = open(self.csv_path, "w", newline="")
-        fieldnames = [
-            "epoch", "phase", "loss",
-            "rmse_tree_count", "mae_tree_count", "r2_tree_count",
-            "rmse_mean_height", "mae_mean_height", "r2_mean_height",
-            "rmse_tree_count_orig", "mae_tree_count_orig", "r2_tree_count_orig",
-            "rmse_mean_height_orig", "mae_mean_height_orig", "r2_mean_height_orig",
-            "support_ratio", "lr",
-        ]
+        fieldnames = ["epoch", "phase", "loss"]
+        for t in self._target_names:
+            fieldnames += [f"rmse_{t}", f"mae_{t}", f"r2_{t}"]
+        for t in self._target_names:
+            fieldnames += [f"rmse_{t}_orig", f"mae_{t}_orig", f"r2_{t}_orig"]
+        fieldnames += ["support_ratio", "lr"]
         self._csv_writer = csv.DictWriter(
             self._csv_file, fieldnames=fieldnames, extrasaction="ignore"
         )

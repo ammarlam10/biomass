@@ -14,6 +14,10 @@ artifacts/ensemble/**/runs/
 artifacts/**/*.pt
 artifacts/vis_height/
 
+# Large serialized XGBoost models (regenerate with scripts/train_xgboost.py)
+artifacts/**/xgb_mean_height.json
+artifacts/**/xgb_tree_count.json
+
 # Jupyter
 .ipynb_checkpoints/
 notebooks/.ipynb_checkpoints/

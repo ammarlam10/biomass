@@ -78,14 +78,19 @@ class MaskedRegressionLoss(nn.Module):
 
 
 def build_loss(cfg: dict) -> MaskedRegressionLoss:
-    """Construct loss from the ``training`` sub-dict of the full config."""
+    """Construct loss from the ``training`` sub-dict of the full config.
+
+    Weights are assembled in the order of ``data.targets`` so the loss is
+    correct for both single-task and dual-task configurations.
+    """
     train_cfg = cfg.get("training", {})
     raw_type = train_cfg.get("loss", "masked_mse")
     loss_type = raw_type.replace("masked_", "")   # normalise 'masked_mse' → 'mse'
 
+    targets = cfg.get("data", {}).get("targets", ["tree_count", "mean_height"])
     lw = train_cfg.get("loss_weights", {})
-    weights = [
-        float(lw.get("tree_count", 1.0)),
-        float(lw.get("mean_height", 1.0)),
-    ]
+    # Default weight 1.0 per target; honour named weights when present
+    _default_weights = {"tree_count": 1.0, "mean_height": 1.0}
+    weights = [float(lw.get(t, _default_weights.get(t, 1.0))) for t in targets]
+
     return MaskedRegressionLoss(loss_type=loss_type, weights=weights)

@@ -1,0 +1,18 @@
+{
+  "epoch": 28,
+  "checkpoint": "/workspace/artifacts/benchmark/clay/seed_456/p2/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.2265826828896357,
+  "mae_tree_count": 0.21051974180538044,
+  "r2_tree_count": 0.014017244259138861,
+  "rmse_tree_count_orig": 0.6021553410209947,
+  "mae_tree_count_orig": 0.5256643152425543,
+  "r2_tree_count_orig": 0.02112207081427908,
+  "rmse_mean_height": 0.3702281300586366,
+  "mae_mean_height": 0.2869702421765536,
+  "r2_mean_height": 0.2815794076874739,
+  "rmse_mean_height_orig": 7.1171349819868315,
+  "mae_mean_height_orig": 5.708841660004442,
+  "r2_mean_height_orig": 0.2715753738657175,
+  "support_ratio": 0.2676974429652609
+}

@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Experiment A1: Single-Task U-Net ResNet50 – tree_count only
+#
+# Changes vs configs/benchmark/unet_resnet50.yaml:
+#   - data.targets: [tree_count]   ← single output channel
+#   - save_dir / logging: under artifacts/experiments/singletask_count_unet/
+#
+# Usage (DDP with 3 GPUs as in benchmark):
+#   torchrun --nproc_per_node=3 scripts/train.py \
+#     --config configs/experiments/singletask_count_unet.yaml \
+#     --ddp --seed 42 \
+#     --run-dir /workspace/artifacts/experiments/singletask_count_unet/seed_42
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  root: /data/ammar/4g.zarr
+  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]
+  s2_seasons: [summer, autumn, spring, winter]
+  use_species: true
+
+  valid_mask_mode: notnull
+
+  targets: [tree_count]         # ← single-task: count only
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: unet_resnet50
+
+  unet:
+    encoder_name: resnet50
+    encoder_weights: imagenet
+    decoder_channels: [256, 128, 64, 32, 16]
+
+  vit:    {}
+  prithvi: {}
+
+# ─── Training ─────────────────────────────────────────────────────────────────
+training:
+  seed: 42
+  deterministic: false
+  cudnn_benchmark: true
+  ddp: false
+
+  batch_size: 21
+  num_workers: 8
+  prefetch_factor: 2
+  pin_memory: true
+
+  epochs: 60
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+
+  scheduler: cosine
+  loss: masked_smooth_l1
+
+  loss_weights:
+    tree_count: 1.0
+
+  gradient_accumulation_steps: 1
+  amp: true
+
+  validate_every_n_epochs: 5
+  early_stopping_patience: 10
+
+  save_dir: /workspace/artifacts/experiments/singletask_count_unet/seed_42/checkpoints
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  tensorboard_dir: /workspace/artifacts/experiments/singletask_count_unet/seed_42/runs
+  csv_path: /workspace/artifacts/experiments/singletask_count_unet/seed_42/metrics.csv
+  log_every_n_steps: 10

@@ -177,10 +177,10 @@ class _SpeciesBranch(nn.Module):
 
 class _RegressionHead(nn.Module):
     """
-    Upsample [B, D, 16, 16] → [B, 2, 128, 128] via 3× transposed convolutions.
+    Upsample [B, D, 16, 16] → [B, num_targets, 128, 128] via 3× transposed convolutions.
     """
 
-    def __init__(self, in_dim: int = 1024) -> None:
+    def __init__(self, in_dim: int = 1024, num_targets: int = 2) -> None:
         super().__init__()
         self.net = nn.Sequential(
             nn.ConvTranspose2d(in_dim, 256, 3, stride=2, padding=1, output_padding=1),  # 16→32
@@ -189,7 +189,7 @@ class _RegressionHead(nn.Module):
             nn.GELU(),
             nn.ConvTranspose2d(64, 16, 3, stride=2, padding=1, output_padding=1),        # 64→128
             nn.GELU(),
-            nn.Conv2d(16, 2, 1),
+            nn.Conv2d(16, num_targets, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -202,7 +202,7 @@ class _RegressionHead(nn.Module):
 class ClayAdapter(nn.Module):
     """
     Wraps the Clay ViT-Large encoder and attaches a lightweight regression
-    head to produce [B, 2, H, W] biomass predictions.
+    head to produce [B, num_targets, H, W] biomass predictions.
 
     Parameters
     ----------
@@ -211,6 +211,7 @@ class ClayAdapter(nn.Module):
     s2_perm         : list[int] – full 40-channel S2 permutation
     species_feat_dim: channels for the species side-branch (default 32)
     freeze_encoder  : if True, encoder weights are frozen
+    num_targets     : number of output channels (default 2)
     """
 
     def __init__(
@@ -220,6 +221,7 @@ class ClayAdapter(nn.Module):
         s2_perm: list,
         species_feat_dim: int = 32,
         freeze_encoder: bool = True,
+        num_targets: int = 2,
     ) -> None:
         super().__init__()
 
@@ -251,7 +253,7 @@ class ClayAdapter(nn.Module):
         self.fuse_conv = nn.Conv2d(fuse_in, self.encoder.dim, 1)
 
         # ── Regression head ────────────────────────────────────────────────────
-        self.head = _RegressionHead(in_dim=self.encoder.dim)
+        self.head = _RegressionHead(in_dim=self.encoder.dim, num_targets=num_targets)
 
     # ── Normalization helpers ──────────────────────────────────────────────────
 
@@ -442,10 +444,12 @@ def build_clay_adapter(cfg: dict, num_input_channels: int) -> nn.Module:
     s2_perm      = _build_s2_permutation(n_seasons=4)
     encoder      = _load_clay_encoder(ckpt_path)
 
+    targets = cfg.get("data", {}).get("targets", ["tree_count", "mean_height"])
     return ClayAdapter(
         encoder=encoder,
         norm_buffers=norm_buffers,
         s2_perm=s2_perm,
         species_feat_dim=sp_dim,
         freeze_encoder=freeze_enc,
+        num_targets=len(targets),
     )

@@ -319,7 +319,27 @@ services:
       - CUDA_VISIBLE_DEVICES=2
     command: python scripts/smoke_test_clay.py
 
-  # ── 19. Clay adapter train — Phase 1 (frozen encoder, head warm-up) ──────────
+  # ── 19. NeurIPS paper figures ────────────────────────────────────────────────
+  #   Generates fig1_hero.png, fig2_bavaria_map.png, fig3_histograms.png
+  #   Installs geopandas at runtime (not in base image) for the Bavaria boundary.
+  #   Outputs land in /workspace/artifacts/figures/.
+  #
+  #   Override per-figure generation with --figures (e.g. "--figures 1 3"):
+  #     docker compose run --rm make_figures \
+  #       bash -c "pip install geopandas --quiet && \
+  #                python scripts/make_figures.py --figures 1 3"
+  make_figures:
+    build: .
+    image: biomass:latest
+    <<: *volumes
+    shm_size: '4g'
+    command: >
+      bash -c "pip install geopandas --quiet &&
+      python scripts/make_figures.py
+        --zarr_root /data/ammar/4g.zarr
+        --out_dir /workspace/artifacts/figures"
+
+  # ── 20. Clay adapter train — Phase 1 (frozen encoder, head warm-up) ──────────
   train_clay:
     build: .
     image: biomass:latest

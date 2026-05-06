@@ -21,11 +21,13 @@ from src.models.factory import register_model
 @register_model("unet_resnet50")
 def build_unet_resnet50(cfg: Dict, num_input_channels: int) -> nn.Module:
     unet_cfg = cfg.get("model", {}).get("unet", {})
+    targets = cfg.get("data", {}).get("targets", ["tree_count", "mean_height"])
     return UNetResNet50(
         in_channels=num_input_channels,
         encoder_name=unet_cfg.get("encoder_name", "resnet50"),
         encoder_weights=unet_cfg.get("encoder_weights", "imagenet"),
         decoder_channels=unet_cfg.get("decoder_channels", [256, 128, 64, 32, 16]),
+        num_targets=len(targets),
     )
 
 
@@ -44,6 +46,7 @@ class UNetResNet50(nn.Module):
         encoder_name: str = "resnet50",
         encoder_weights: str = "imagenet",
         decoder_channels: list | None = None,
+        num_targets: int = 2,
     ) -> None:
         super().__init__()
         if decoder_channels is None:
@@ -53,7 +56,7 @@ class UNetResNet50(nn.Module):
             encoder_name=encoder_name,
             encoder_weights=encoder_weights,
             in_channels=in_channels,
-            classes=2,           # tree_count, mean_height
+            classes=num_targets,
             activation=None,     # raw regression – no sigmoid/softmax
             decoder_channels=decoder_channels,
         )
