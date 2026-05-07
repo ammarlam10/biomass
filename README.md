@@ -6,7 +6,6 @@ Pixel-wise regression of **tree count** and **mean height** from multi-seasonal 
 
 - [Docker](https://docs.docker.com/get-docker/) with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
 - NVIDIA GPU (16 GB+ VRAM recommended)
-- Zarr dataset archive (see [`configs/`](configs/) for data path configuration)
 
 ## Setup
 
