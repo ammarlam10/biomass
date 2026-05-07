@@ -1,0 +1,118 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Experiment: Auxiliary DOP20 Feature Reconstruction – UNet ResNet50
+#
+# Hypothesis: forcing the shared encoder/decoder to predict spatially-aligned
+# ResNet50 features extracted from 20cm RGB (DOP20) imagery acts as a
+# regulariser that improves primary LiDAR predictions (tree_count, mean_height).
+#
+# Changes vs configs/benchmark/unet_resnet50.yaml:
+#   - model.name: unet_resnet50_multitask   ← dual-head UNet
+#   - model.aux.feature_dim: 256            ← matches extraction D
+#   - data.dop20_features_path              ← pre-extracted feature zarr
+#   - training.aux_lambda: 0.1             ← weight on auxiliary MSE loss
+#   - save_dir / logging: under artifacts/experiments/aux_dop20/
+#
+# Prerequisites:
+#   1. Run the DOP20 feature extraction once:
+#        docker compose run --rm extract_dop20_features
+#      This writes /data/train_dop20_features.zarr (D=256, float16).
+#
+#   2. Ensure norm_stats.json exists (compute_stats.py was already run).
+#
+# Usage (single GPU):
+#   docker compose run --rm train_aux_dop20
+#
+# Usage (manual, with seed override):
+#   python scripts/train.py \
+#     --config configs/experiments/aux_dop20_unet.yaml \
+#     --seed 42 \
+#     --run-dir /workspace/artifacts/experiments/aux_dop20/seed_42
+# ─────────────────────────────────────────────────────────────────────────────
+
+data:
+  # Docker: mount your zarr directory as /data, e.g.
+  #   -v ~/tree/Bavaria-EO-Benchmark/data/zarr:/data[:ro]
+  # Then train.zarr, train_dop20.zarr (RGB), and train_dop20_features.zarr (after extraction)
+  # all sit next to each other on the host under .../data/zarr/.
+  root: /data/train.zarr
+  split_file: /data/train.zarr/patch_index_subset.parquet
+
+  split_column: split
+  patch_idx_column: zarr_idx
+
+  s1_seasons: [summer, autumn, spring, winter]
+  s2_seasons: [summer, autumn, spring, winter]
+  use_species: true
+
+  valid_mask_mode: notnull
+
+  targets: [tree_count, mean_height]
+
+  target_transform:
+    tree_count: log1p
+    mean_height: log1p
+
+  norm_stats_path: /workspace/artifacts/norm_stats.json
+
+  # DOP20 auxiliary feature zarr produced by scripts/extract_dop20_features.py
+  dop20_features_path: /data/train_dop20_features.zarr
+  dop20_feature_dim: 256
+
+# ─── Model ────────────────────────────────────────────────────────────────────
+model:
+  name: unet_resnet50_multitask
+
+  unet:
+    encoder_name: resnet50
+    encoder_weights: imagenet
+    decoder_channels: [256, 128, 64, 32, 16]
+
+  # Auxiliary head configuration (must match dop20_feature_dim above)
+  aux:
+    feature_dim: 256
+
+  vit:    {}
+  prithvi: {}
+
+# ─── Training ─────────────────────────────────────────────────────────────────
+training:
+  seed: 42
+  deterministic: false
+  cudnn_benchmark: true
+  ddp: false
+
+  batch_size: 64
+  num_workers: 12
+  prefetch_factor: 2
+  pin_memory: true
+
+  epochs: 100
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+
+  scheduler: cosine
+
+  # Primary LiDAR loss (unchanged from baseline)
+  loss: masked_smooth_l1
+  loss_weights:
+    tree_count: 1.0
+    mean_height: 1.0
+
+  # Weight for auxiliary DOP20 feature MSE loss:
+  #   total_loss = primary_loss + aux_lambda * aux_loss
+  # Start with 0.1; increase to 0.5 if auxiliary loss dominates too quickly.
+  aux_lambda: 0.1
+
+  gradient_accumulation_steps: 1
+  amp: true
+
+  validate_every_n_epochs: 5
+  early_stopping_patience: 10
+
+  save_dir: /workspace/artifacts/experiments/aux_dop20/checkpoints
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  tensorboard_dir: /workspace/artifacts/experiments/aux_dop20/runs
+  csv_path: /workspace/artifacts/experiments/aux_dop20/metrics.csv
+  log_every_n_steps: 10

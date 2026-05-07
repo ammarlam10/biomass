@@ -14,6 +14,9 @@ artifacts/ensemble/**/runs/
 artifacts/**/*.pt
 artifacts/vis_height/
 
+# Local experiment outputs (do not push)
+artifacts/experiments/aux_dop20/
+
 # Large serialized XGBoost models (regenerate with scripts/train_xgboost.py)
 artifacts/**/xgb_mean_height.json
 artifacts/**/xgb_tree_count.json

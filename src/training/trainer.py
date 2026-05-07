@@ -9,9 +9,19 @@ Supports:
   - Streaming validation metrics (RunningMetrics – no end-of-epoch cat)
   - Optional sparse validation (``validate_every_n_epochs``) and early stopping
     on combined val RMSE (``early_stopping_patience`` training epochs without improvement)
+  - Multi-task auxiliary loss: when the dataset yields (x, y, mask, dop20_feats)
+    and the model returns a (primary, auxiliary) tuple, an additional MSE loss
+    against the DOP20 features is added to the primary loss:
+        total_loss = primary_loss + aux_lambda * auxiliary_loss
+    ``aux_lambda`` is read from ``training.aux_lambda`` (default 0.1).
 
-Model contract: forward(x: [B,C,H,W]) → [B,2,H,W]
-DataLoader contract: yields (x, y, valid_mask)
+Model contracts:
+  Single-task : forward(x) → Tensor [B, T, H, W]
+  Multi-task  : forward(x) → Tuple[Tensor, Tensor]  (primary, auxiliary)
+
+DataLoader contracts:
+  Standard    : yields (x, y, valid_mask)
+  With DOP20  : yields (x, y, valid_mask, dop20_feats)
 
 This class is intentionally model-agnostic; works unchanged for UNet,
 ViT, Prithvi, etc.
@@ -28,6 +38,7 @@ from typing import Dict, Optional, Any
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
@@ -96,6 +107,7 @@ class Trainer:
 
         # ── loss ──────────────────────────────────────────────────────────────
         self.criterion: MaskedRegressionLoss = build_loss(cfg)
+        self.aux_lambda: float = float(train_cfg.get("aux_lambda", 0.1))
 
         # ── optimiser ─────────────────────────────────────────────────────────
         self.optimizer = torch.optim.AdamW(
@@ -237,6 +249,8 @@ class Trainer:
 
         self.optimizer.zero_grad()
 
+        total_aux_loss = 0.0
+
         with torch.set_grad_enabled(training):
             pbar = tqdm(
                 loader,
@@ -244,18 +258,32 @@ class Trainer:
                 leave=False,
                 disable=not self.is_main,
             )
-            for batch_idx, (x, y, mask) in enumerate(pbar):
-                x = x.to(self.device, non_blocking=True)
-                y = y.to(self.device, non_blocking=True)
+            for batch_idx, batch in enumerate(pbar):
+                # ── unpack batch (3- or 4-element) ────────────────────────────
+                if len(batch) == 4:
+                    x, y, mask, dop_feats = batch
+                    dop_feats = dop_feats.to(self.device, non_blocking=True)
+                else:
+                    x, y, mask = batch
+                    dop_feats = None
+
+                x    = x.to(self.device, non_blocking=True)
+                y    = y.to(self.device, non_blocking=True)
                 mask = mask.to(self.device, non_blocking=True)
 
                 if self.amp:
                     with torch.cuda.amp.autocast():
-                        pred = self.model(x)
-                        loss = self.criterion(pred, y, mask) / self.grad_accum
+                        output = self.model(x)
+                        pred, pred_aux, loss = self._compute_loss(
+                            output, y, mask, dop_feats
+                        )
+                        loss = loss / self.grad_accum
                 else:
-                    pred = self.model(x)
-                    loss = self.criterion(pred, y, mask) / self.grad_accum
+                    output = self.model(x)
+                    pred, pred_aux, loss = self._compute_loss(
+                        output, y, mask, dop_feats
+                    )
+                    loss = loss / self.grad_accum
 
                 if training:
                     if self.amp:
@@ -290,28 +318,45 @@ class Trainer:
                                 self.global_step,
                             )
 
-                total_loss += loss.item() * self.grad_accum
+                unscaled = loss.item() * self.grad_accum
+                total_loss += unscaled
                 total_support += mask.float().mean().item()
                 n_batches += 1
+
+                # Track auxiliary loss magnitude for logging
+                if pred_aux is not None and dop_feats is not None:
+                    aux_l = F.mse_loss(pred_aux.detach(), dop_feats.float()).item()
+                    total_aux_loss += aux_l
 
                 # streaming metrics update (CPU, no tensor stacking)
                 rm.update(pred.detach().cpu(), y.detach().cpu(), mask.detach().cpu())
 
                 if self.is_main:
-                    pbar.set_postfix({"loss": f"{loss.item() * self.grad_accum:.4f}"})
+                    pbar.set_postfix({"loss": f"{unscaled:.4f}"})
 
         avg_loss = total_loss / max(n_batches, 1)
+        avg_aux_loss = total_aux_loss / max(n_batches, 1)
         avg_support = total_support / max(n_batches, 1)
         metrics = rm.compute()
         metrics["loss"] = avg_loss
         metrics["support_ratio"] = avg_support
+        if total_aux_loss > 0.0:
+            metrics["loss_auxiliary"] = avg_aux_loss
+            metrics["loss_primary"] = avg_loss - self.aux_lambda * avg_aux_loss
 
         if self.is_main:
             self.writer.add_scalar(f"{phase}/loss", avg_loss, epoch)
+            if total_aux_loss > 0.0:
+                self.writer.add_scalar(f"{phase}/loss_auxiliary", avg_aux_loss, epoch)
+                self.writer.add_scalar(
+                    f"{phase}/loss_primary",
+                    metrics["loss_primary"],
+                    epoch,
+                )
             self.writer.add_scalar(f"{phase}/support_ratio", avg_support, epoch)
             self.writer.add_scalar(f"{phase}/lr", self.optimizer.param_groups[0]["lr"], epoch)
             for k, v in metrics.items():
-                if k not in ("loss", "support_ratio") and v == v:
+                if k not in ("loss", "support_ratio", "loss_auxiliary", "loss_primary") and v == v:
                     self.writer.add_scalar(f"{phase}/{k}", v, epoch)
 
             target_parts = "  ".join(
@@ -345,14 +390,18 @@ class Trainer:
 
         model.eval()
         with torch.no_grad():
-            for x, y, mask in tqdm(loader, desc="Eval [test]", leave=False, disable=not self.is_main):
+            for batch in tqdm(loader, desc="Eval [test]", leave=False, disable=not self.is_main):
+                # Accept both 3- and 4-element batches (DOP20 feats not needed at eval)
+                x, y, mask = batch[0], batch[1], batch[2]
                 x = x.to(self.device, non_blocking=True)
                 # Full-precision forward: AMP fp16 logits + expm1() blow up orig-scale RMSE.
                 if self.device.type == "cuda":
                     with torch.cuda.amp.autocast(enabled=False):
-                        pred = model(x)
+                        output = model(x)
                 else:
-                    pred = model(x)
+                    output = model(x)
+                # Unwrap multi-task tuple; only primary output is used for metrics
+                pred = output[0] if isinstance(output, tuple) else output
                 pred = pred.float()
                 total_support += mask.float().mean().item()
                 n_batches += 1
@@ -449,6 +498,36 @@ class Trainer:
         print(f"{'─' * W}\n")
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _compute_loss(
+        self,
+        output: "torch.Tensor | tuple[torch.Tensor, torch.Tensor]",
+        y: torch.Tensor,
+        mask: torch.Tensor,
+        dop_feats: "Optional[torch.Tensor]",
+    ) -> "tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]":
+        """
+        Compute the combined primary + auxiliary loss.
+
+        Returns:
+            pred_primary : [B, T, H, W]
+            pred_aux     : [B, D, H, W] or None
+            total_loss   : scalar tensor (before grad_accum division)
+        """
+        if isinstance(output, tuple):
+            pred_primary, pred_aux = output
+        else:
+            pred_primary, pred_aux = output, None
+
+        primary_loss = self.criterion(pred_primary, y, mask)
+
+        if pred_aux is not None and dop_feats is not None:
+            aux_loss = F.mse_loss(pred_aux, dop_feats.float())
+            total_loss = primary_loss + self.aux_lambda * aux_loss
+        else:
+            total_loss = primary_loss
+
+        return pred_primary, pred_aux, total_loss
 
     def _build_scheduler(self, train_loader: DataLoader) -> None:
         name = self._scheduler_name

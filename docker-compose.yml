@@ -351,3 +351,54 @@ services:
       python scripts/train.py
         --config configs/clay.yaml
         --run-dir /workspace/artifacts/clay
+
+  # ── 21. Extract DOP20 features (run once before aux_dop20 training) ──────────
+  #   Reads train_dop20.zarr, extracts frozen ResNet50 features for every patch,
+  #   applies PCA to D=256, writes train_dop20_features.zarr (float16, ~20-30 GB).
+  #
+  #   Override feature dimension or batch size at runtime:
+  #     docker compose run --rm extract_dop20_features \
+  #       python scripts/extract_dop20_features.py \
+  #         --zarr-root /data --feature-dim 512 --batch-size 256
+  #
+  #   To resume an interrupted run (default): just re-run the service.
+  #   To restart from scratch: add --no-resume flag.
+  extract_dop20_features:
+    build: .
+    image: biomass:latest
+    <<: *gpu_single
+    volumes:
+      - /home/ammar/tree/Bavaria-EO-Benchmark/data/zarr:/data  # read-write: writes features zarr
+      - /work/ammar/sslrp/biomass:/workspace
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/extract_dop20_features.py
+        --zarr-root /data
+        --output    /data/train_dop20_features.zarr
+        --feature-dim 256
+        --batch-size 512
+
+  # ── 22. Train UNet with DOP20 auxiliary feature reconstruction ───────────────
+  #   Requires extract_dop20_features to have completed first.
+  #
+  #   Override lambda at runtime:
+  #     docker compose run --rm train_aux_dop20 \
+  #       python scripts/train.py \
+  #         --config configs/experiments/aux_dop20_unet.yaml \
+  #         --run-dir /workspace/artifacts/experiments/aux_dop20/seed_42
+  train_aux_dop20:
+    build: .
+    image: biomass:latest
+    <<: *gpu_single
+    volumes:
+      - /home/ammar/tree/Bavaria-EO-Benchmark/data/zarr:/data:ro  # train.zarr + features zarr
+      - /work/ammar/sslrp/biomass:/workspace
+      - /work/ammar/sslrp/biomass/artifacts:/workspace/artifacts
+    shm_size: '16g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train.py
+        --config configs/experiments/aux_dop20_unet.yaml

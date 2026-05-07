@@ -17,16 +17,20 @@ Targets (configurable via ``data.targets``):
   Both zarr arrays are always loaded to build valid_mask (mask is driven by
   isfinite(mean_height) regardless of which targets are requested).
 
-Returns (x, y, valid_mask):
+Returns (x, y, valid_mask) — standard mode:
   x          – float32 tensor [C, 128, 128], normalised, NaN→0
   y          – float32 tensor [N_t, 128, 128], fill NaN→0 (masked in loss)
   valid_mask – bool tensor    [128, 128]
+
+Returns (x, y, valid_mask, dop20_feats) — when data.dop20_features_path is set:
+  dop20_feats – float32 tensor [D, 128, 128], pre-extracted DOP20 RGB features
+                used as the auxiliary reconstruction target during training.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -102,6 +106,30 @@ class BiomassDataset(Dataset):
                     f"Unknown target '{t}'. Supported: {ALL_TARGETS}"
                 )
 
+        # ── optional DOP20 feature loading ────────────────────────────────────
+        dop20_raw = data_cfg.get("dop20_features_path")
+        dop20_path = (
+            str(dop20_raw).strip() if dop20_raw not in (None, "") else ""
+        )
+        if dop20_path:
+            p = Path(dop20_path)
+            if not p.exists():
+                raise FileNotFoundError(
+                    f"DOP20 features zarr not found: {p.resolve()}\n"
+                    "Run scripts/extract_dop20_features.py first (writes "
+                    "<output>/features), or unset data.dop20_features_path."
+                )
+            root = zarr.open(str(p), mode="r")
+            try:
+                self._dop20_features = root["features"]
+            except KeyError as exc:
+                raise KeyError(
+                    f"No array named 'features' under {p}. "
+                    "Expected extract_dop20_features.py output layout."
+                ) from exc
+        else:
+            self._dop20_features = None
+
         # ── load patch indices for this split ─────────────────────────────────
         split_file = data_cfg.get("split_file", str(self.root / "patch_index_subset.parquet"))
         split_col = data_cfg.get("split_column", "split")
@@ -159,7 +187,12 @@ class BiomassDataset(Dataset):
     def __len__(self) -> int:
         return len(self.patch_indices)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ]:
         patch_idx = int(self.patch_indices[idx])
 
         x = self._load_input(patch_idx)          # [C, H, W] float32
@@ -193,6 +226,12 @@ class BiomassDataset(Dataset):
 
         if self.transform is not None:
             x_t, y_t, mask_t = self.transform(x_t, y_t, mask_t)
+
+        if self._dop20_features is not None:
+            dop20 = np.array(
+                self._dop20_features[patch_idx], dtype=np.float32
+            )  # [D, 128, 128]
+            return x_t, y_t, mask_t, torch.from_numpy(dop20)
 
         return x_t, y_t, mask_t
 
