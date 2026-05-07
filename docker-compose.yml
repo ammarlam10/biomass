@@ -1,46 +1,8 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Biomass pipeline services
-#
-# Prerequisites:
-#   - NVIDIA Container Toolkit installed on the host
-#   - docker compose v2 (or docker-compose v1.29+)
-#
-# GPU layout on this host (from nvidia-smi):
-#   GPU 0 – Tesla P100-PCIE-16GB
-#   GPU 1 – Tesla P100-PCIE-16GB
-#   GPU 2 – Tesla V100S-PCIE-32GB   ← preferred for training (Tensor Cores)
-#   GPU 3 – Tesla V100S-PCIE-32GB
-#   GPU 4 – Tesla P100-PCIE-16GB
-#   GPU 5 – Tesla V100-PCIE-32GB
-#
-# Services pin to GPU 2 by default via CUDA_VISIBLE_DEVICES.
-# Change the value or override at runtime:
-#   CUDA_VISIBLE_DEVICES=3 docker compose run --rm train
-#
-# For multi-GPU DDP use the `train_ddp` service (GPUs 2 + 3 by default).
-#
-# GPU access uses the `deploy.resources` spec (docker compose v2).
-# If you need the older `runtime: nvidia` syntax, swap each `deploy` block
-# for `runtime: nvidia`.
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 version: "3.9"
 
-# ── shared YAML anchors ───────────────────────────────────────────────────────
-
-# Single GPU – exposes all GPUs to the container; CUDA_VISIBLE_DEVICES
-# narrows the actual selection at the process level.
-x-gpu-single: &gpu_single
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: all
-            capabilities: [gpu]
-
-# Two GPU – for DDP runs on V100S pair (GPUs 2 & 3).
-x-gpu-two: &gpu_two
+x-gpu: &gpu
   deploy:
     resources:
       reservations:
@@ -51,60 +13,41 @@ x-gpu-two: &gpu_two
 
 x-volumes: &volumes
   volumes:
-    - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro   # zarr dataset (inputs/, labels/, parquet)
-    - /work/ammar/sslrp/biomass:/workspace             # source code
-    - /work/ammar/sslrp/biomass/artifacts:/workspace/artifacts  # outputs
+    - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro
+    - /path/to/this/repo:/workspace
+    - /path/to/this/repo/artifacts:/workspace/artifacts
 
 services:
 
-  # ── 1. Compute per-channel normalisation stats (run once) ──────────────────
+  # ── Compute per-channel normalisation statistics ──
   compute_stats:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
+    <<: [*gpu, *volumes]
     shm_size: '4g'
     environment:
-      - CUDA_VISIBLE_DEVICES=2      # CPU-only script; GPU not used, but keep consistent
+      - CUDA_VISIBLE_DEVICES=2
     command: >
       python scripts/compute_stats.py
         --config configs/unet_resnet50.yaml
         --num_workers 12
 
-  # ── 2. Single-GPU train (default) – targets V100S GPU 2 ─────────────────────
+  # ── UNet-ResNet50 ─────────────────────────────────────────────────────────────
   train:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '16g'             # PyTorch DataLoader workers need /dev/shm space
+    <<: [*gpu, *volumes]
+    shm_size: '16g'
     environment:
-      - CUDA_VISIBLE_DEVICES=2  # V100S 32GB; change to 3/5 for the other V100S
+      - CUDA_VISIBLE_DEVICES=2
     command: >
       python scripts/train.py
         --config configs/unet_resnet50.yaml
 
-  # ── 3. Multi-GPU DDP train – V100S×2 + V100 (GPUs 2, 3, 5 → 3×32 GB) ────────
-  #   Launches 3 processes via torchrun, one per GPU.
-  #   Effective batch size = config batch_size × 3 = 96.
-  train_ddp:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_two, *volumes]
-    shm_size: '32g'             # DDP NCCL also uses shared memory
-    environment:
-      - CUDA_VISIBLE_DEVICES=2,3,5
-    command: >
-      torchrun
-        --standalone
-        --nproc_per_node=3
-        scripts/train.py
-        --config configs/unet_resnet50.yaml
-        --ddp
-
-  # ── 4. Evaluate on test split ───────────────────────────────────────────────
   eval:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
+    <<: [*gpu, *volumes]
     shm_size: '8g'
     environment:
       - CUDA_VISIBLE_DEVICES=2
@@ -114,138 +57,11 @@ services:
         --checkpoint /workspace/artifacts/checkpoints/best.pt
         --split test
 
-  # ── 5. Evaluate on val split ────────────────────────────────────────────────
-  eval_val:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate.py
-        --config configs/unet_resnet50.yaml
-        --checkpoint /workspace/artifacts/checkpoints/best.pt
-        --split val
-
-  # ── 6. Jupyter notebook for EDA / debugging ─────────────────────────────────
-  notebook:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    ports:
-      - "8888:8888"
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      jupyter notebook
-        --ip=0.0.0.0 --port=8888
-        --no-browser --allow-root
-        --NotebookApp.token=''
-
-  # ── 7. Pipeline check (data + model validation) ───────────────────────────
-  check:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '16g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/pipeline_check.py
-
-  # ── 8. XGBoost baseline – train (pixel-level features, GPU-accelerated) ──────
-  #   Uses xgboost.device=cuda (set in configs/xgboost.yaml) so tree building runs on GPU.
-  #   Includes test evaluation at the end; pass --no_test to skip it.
-  #   Override feature mode at runtime:
-  #     docker compose run --rm train_xgboost python scripts/train_xgboost.py \
-  #       --config configs/xgboost.yaml --feature_mode patch
-  train_xgboost:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2      # V100S 32GB; XGBoost hist method runs on this GPU
-    command: >
-      python scripts/train_xgboost.py
-        --config configs/xgboost.yaml
-
-  # ── 9. XGBoost evaluate – test split ─────────────────────────────────────────
-  eval_xgboost:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate_xgboost.py
-        --config configs/xgboost.yaml
-        --model_dir /workspace/artifacts
-        --split test
-
-  # ── 10. XGBoost evaluate – val split ─────────────────────────────────────────
-  eval_xgboost_val:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate_xgboost.py
-        --config configs/xgboost.yaml
-        --model_dir /workspace/artifacts
-        --split val
-
-  # ── 11. SegFormer train – single GPU ─────────────────────────────────────────
-  train_segformer:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '16g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/train.py
-        --config configs/segformer.yaml
-        --run-dir /workspace/artifacts/segformer
-
-  # ── 12. SegFormer evaluate – test split ──────────────────────────────────────
-  eval_segformer:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate.py
-        --config configs/segformer.yaml
-        --checkpoint /workspace/artifacts/segformer/checkpoints/best.pt
-        --split test
-
-  # ── 13. SegFormer evaluate – val split ───────────────────────────────────────
-  eval_segformer_val:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate.py
-        --config configs/segformer.yaml
-        --checkpoint /workspace/artifacts/segformer/checkpoints/best.pt
-        --split val
-
-  # ── 14. SegFormer-B3 train – single GPU ──────────────────────────────────────
+  # ── SegFormer-B3 ─────────────────────────────────────────────────────────────
   train_segformer_b3:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
+    <<: [*gpu, *volumes]
     shm_size: '16g'
     environment:
       - CUDA_VISIBLE_DEVICES=2
@@ -254,11 +70,10 @@ services:
         --config configs/segformer_b3.yaml
         --run-dir /workspace/artifacts/segformer_b3
 
-  # ── 15. SegFormer-B3 evaluate – test split ────────────────────────────────────
   eval_segformer_b3:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
+    <<: [*gpu, *volumes]
     shm_size: '8g'
     environment:
       - CUDA_VISIBLE_DEVICES=2
@@ -268,82 +83,11 @@ services:
         --checkpoint /workspace/artifacts/segformer_b3/checkpoints/best.pt
         --split test
 
-  # ── 16. SegFormer-B3 evaluate – val split ─────────────────────────────────────
-  eval_segformer_b3_val:
-    build: .
-    image: biomass:latest
-    <<: [*gpu_single, *volumes]
-    shm_size: '8g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: >
-      python scripts/evaluate.py
-        --config configs/segformer_b3.yaml
-        --checkpoint /workspace/artifacts/segformer_b3/checkpoints/best.pt
-        --split val
-
-  # ── 17. Compare all models (UNet vs XGBoost vs SegFormer) ────────────────────
-  #   Reads test_metrics.json files produced by each model's eval service.
-  #   Run after eval, eval_xgboost, and eval_segformer have completed.
-  #   Override --format for CSV or JSON output:
-  #     docker compose run --rm compare_models \
-  #       python scripts/compare_models.py \
-  #         --unet    /workspace/artifacts/checkpoints/test_metrics.json \
-  #         --xgb     /workspace/artifacts/test_metrics_xgboost.json \
-  #         --segformer /workspace/artifacts/segformer/checkpoints/test_metrics.json \
-  #         --format csv
-  compare_models:
-    build: .
-    image: biomass:latest
-    <<: *volumes
-    command: >
-      python scripts/compare_models.py
-        --unet      /workspace/artifacts/checkpoints/test_metrics.json
-        --xgb       /workspace/artifacts/test_metrics_xgboost.json
-        --segformer /workspace/artifacts/segformer/checkpoints/test_metrics.json
-        --run "SegFormer-B3" /workspace/artifacts/segformer_b3/checkpoints/test_metrics.json
-
-  # ── 18. Clay adapter smoke test ───────────────────────────────────────────────
-  #   Validates Clay adapter forward pass, shape, no-NaN, gradient flow.
-  #   Uses random-init encoder — no checkpoint required.
-  #   Mounts the live code dir so the image need not be rebuilt for code changes.
-  smoke_clay:
-    build: .
-    image: biomass:latest
-    <<: *gpu_single
-    volumes:
-      - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro
-      - /data/ammar/biomass:/workspace          # live source code
-    shm_size: '4g'
-    environment:
-      - CUDA_VISIBLE_DEVICES=2
-    command: python scripts/smoke_test_clay.py
-
-  # ── 19. NeurIPS paper figures ────────────────────────────────────────────────
-  #   Generates fig1_hero.png, fig2_bavaria_map.png, fig3_histograms.png
-  #   Installs geopandas at runtime (not in base image) for the Bavaria boundary.
-  #   Outputs land in /workspace/artifacts/figures/.
-  #
-  #   Override per-figure generation with --figures (e.g. "--figures 1 3"):
-  #     docker compose run --rm make_figures \
-  #       bash -c "pip install geopandas --quiet && \
-  #                python scripts/make_figures.py --figures 1 3"
-  make_figures:
-    build: .
-    image: biomass:latest
-    <<: *volumes
-    shm_size: '4g'
-    command: >
-      bash -c "pip install geopandas --quiet &&
-      python scripts/make_figures.py
-        --zarr_root /data/ammar/4g.zarr
-        --out_dir /workspace/artifacts/figures"
-
-  # ── 20. Clay adapter train — Phase 1 (frozen encoder, head warm-up) ──────────
+  # ── Clay  ───────────────────────────────────────
   train_clay:
     build: .
     image: biomass:latest
-    <<: [*gpu_single, *volumes]
+    <<: [*gpu, *volumes]
     shm_size: '16g'
     environment:
       - CUDA_VISIBLE_DEVICES=2
@@ -351,3 +95,41 @@ services:
       python scripts/train.py
         --config configs/clay.yaml
         --run-dir /workspace/artifacts/clay
+
+  eval_clay:
+    build: .
+    image: biomass:latest
+    <<: [*gpu, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate.py
+        --config configs/clay.yaml
+        --checkpoint /workspace/artifacts/clay/checkpoints/best.pt
+        --split test
+
+  # ── XGBoost pixel baseline ────────────────────────────────────────────────────
+  train_xgboost:
+    build: .
+    image: biomass:latest
+    <<: [*gpu, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/train_xgboost.py
+        --config configs/xgboost.yaml
+
+  eval_xgboost:
+    build: .
+    image: biomass:latest
+    <<: [*gpu, *volumes]
+    shm_size: '8g'
+    environment:
+      - CUDA_VISIBLE_DEVICES=2
+    command: >
+      python scripts/evaluate_xgboost.py
+        --config configs/xgboost.yaml
+        --model_dir /workspace/artifacts
+        --split test

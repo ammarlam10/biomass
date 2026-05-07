@@ -58,13 +58,10 @@ Outputs per run:
 ## Evaluation
 
 ```bash
-# Test-split evaluation for each model
 docker compose run --rm eval               # UNet-ResNet50
 docker compose run --rm eval_segformer_b3  # SegFormer-B3
+docker compose run --rm eval_clay          # Clay
 docker compose run --rm eval_xgboost       # XGBoost
-
-# Aggregate results across all models
-docker compose run --rm compare_models
 ```
 
 Metrics (masked RMSE, MAE, R²) are written to `artifacts/<model>/checkpoints/test_metrics.json`.
@@ -82,6 +79,5 @@ biomass/
 │   ├── models/            # UNet, SegFormer, Clay, XGBoost
 │   ├── losses/            # masked regression loss
 │   └── training/          # training loop and metrics
-├── scripts/               # training, evaluation, and utility entrypoints
-└── notebooks/             # exploratory data analysis
+└── scripts/               # train.py, evaluate.py, train_xgboost.py, evaluate_xgboost.py, compute_stats.py
 ```
