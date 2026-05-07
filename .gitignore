@@ -14,6 +14,12 @@ artifacts/ensemble/**/runs/
 artifacts/**/*.pt
 artifacts/vis_height/
 
+# TensorBoard event files
+artifacts/**/*.tfevents.*
+
+# Untracked experiment shell runner
+scripts/experiments/docker_run_all_experiments_seeds.sh
+
 # Large serialized XGBoost models (regenerate with scripts/train_xgboost.py)
 artifacts/**/xgb_mean_height.json
 artifacts/**/xgb_tree_count.json

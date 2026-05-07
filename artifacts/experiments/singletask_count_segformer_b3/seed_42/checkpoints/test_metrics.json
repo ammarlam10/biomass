@@ -1,0 +1,12 @@
+{
+  "epoch": 20,
+  "checkpoint": "/workspace/artifacts/experiments/singletask_count_segformer_b3/seed_42/checkpoints/best.pt",
+  "n_patches": 1853,
+  "rmse_tree_count": 0.22501652444442194,
+  "mae_tree_count": 0.20546104802346585,
+  "r2_tree_count": 0.027600527520960205,
+  "rmse_tree_count_orig": 0.6006613035720412,
+  "mae_tree_count_orig": 0.5140973346558305,
+  "r2_tree_count_orig": 0.02597352979341272,
+  "support_ratio": 0.2680268385286989
+}

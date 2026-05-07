@@ -1,12 +1,12 @@
 {
-  "epoch": 56,
+  "epoch": 60,
   "checkpoint": "/workspace/artifacts/experiments/singletask_height_unet/seed_42/checkpoints/best.pt",
   "n_patches": 1853,
-  "rmse_mean_height": 0.3104227031963843,
-  "mae_mean_height": 0.23258852181978357,
-  "r2_mean_height": 0.4949354369482426,
-  "rmse_mean_height_orig": 5.923930846520671,
-  "mae_mean_height_orig": 4.5780040052811115,
-  "r2_mean_height_orig": 0.4953454715681971,
-  "support_ratio": 0.2674509101900561
+  "rmse_mean_height": 0.308969412599348,
+  "mae_mean_height": 0.23206453203510916,
+  "r2_mean_height": 0.4996534385251198,
+  "rmse_mean_height_orig": 5.905023530438923,
+  "mae_mean_height_orig": 4.5690252211483235,
+  "r2_mean_height_orig": 0.498561726430475,
+  "support_ratio": 0.27053467678220083
 }
