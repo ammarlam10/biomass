@@ -1,4 +1,4 @@
-# Forest Biomass Estimation from Multi-Seasonal Satellite Imagery
+# TreeUQ: Uncertainty-Aware Multimodal Regression for Tree Density and Height
 
 Pixel-wise regression of **tree count** and **mean height** from multi-seasonal Sentinel-1, Sentinel-2, and tree species data over Bavaria, Germany. The pipeline benchmarks three deep learning architectures — **UNet-ResNet50**, **SegFormer-B3**, and **Clay** (a geospatial foundation model) — against an **XGBoost** pixel baseline. A masked regression loss handles sparse ground-truth labels by only supervising valid (non-NaN) pixels.
 
