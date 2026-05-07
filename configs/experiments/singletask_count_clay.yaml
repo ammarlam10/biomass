@@ -1,27 +1,7 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Experiment A1: Single-Task Clay v1.5 – tree_count only
-#
-# Two-phase training schedule (same as benchmark):
-#
-#   Phase 1 – freeze encoder (30 epochs):
-#     torchrun --nproc_per_node=2 scripts/train.py \
-#       --config configs/experiments/singletask_count_clay.yaml \
-#       --freeze-clay-encoder --lr 1e-4 --epochs 30 \
-#       --seed 42 \
-#       --run-dir /workspace/artifacts/experiments/singletask_count_clay/seed_42/p1
-#
-#   Phase 2 – unfreeze encoder (30 epochs):
-#     torchrun --nproc_per_node=2 scripts/train.py \
-#       --config configs/experiments/singletask_count_clay.yaml \
-#       --no-freeze-clay-encoder --lr 5e-5 --epochs 30 \
-#       --resume /workspace/artifacts/experiments/singletask_count_clay/seed_42/p1/checkpoints/best.pt \
-#       --seed 42 \
-#       --run-dir /workspace/artifacts/experiments/singletask_count_clay/seed_42/p2
-# ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data//4g.zarr
+  split_file: /data//4g.zarr/patch_index_subset.parquet
 
   split_column: split
   patch_idx_column: zarr_idx

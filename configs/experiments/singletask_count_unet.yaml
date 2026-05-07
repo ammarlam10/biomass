@@ -13,8 +13,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data//4g.zarr
+  split_file: /data//4g.zarr/patch_index_subset.parquet
 
   split_column: split
   patch_idx_column: zarr_idx

@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # SegFormer (MiT-B2) dense regression – training / evaluation config
 # Paths assume Docker mounts:
-#   dataset → /data/ammar/4g.zarr  (read-only)
+#   dataset → /data//4g.zarr  (read-only)
 #   code    → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data/4g.zarr
+  split_file: /data/4g.zarr/patch_index_subset.parquet
 
   # Column names in the parquet file.
   split_column: split        # values expected: train / val / test

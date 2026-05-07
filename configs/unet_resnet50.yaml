@@ -1,13 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # UNet + ResNet50 encoder – training / evaluation config
 # Paths assume Docker mounts:
-#   dataset → /data/ammar/4g.zarr  (read-only; zarr group with inputs/, labels/, parquet)
+#   dataset → /data//4g.zarr  (read-only; zarr group with inputs/, labels/, parquet)
 #   code    → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data/4g.zarr
+  split_file: /data/4g.zarr/patch_index_subset.parquet
 
   # Column names in the parquet file.
   # Run `scripts/compute_stats.py --inspect` to print available columns if

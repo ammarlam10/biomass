@@ -13,7 +13,7 @@ x-gpu: &gpu
 
 x-volumes: &volumes
   volumes:
-    - /data/ammar/4g.zarr:/data/ammar/4g.zarr:ro
+    - /data/path/here:/data/here/4g.zarr:ro
     - /path/to/this/repo:/workspace
     - /path/to/this/repo/artifacts:/workspace/artifacts
 

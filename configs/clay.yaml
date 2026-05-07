@@ -1,20 +1,6 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Clay v1.5 foundation model adapter – training / evaluation config
-#
-# Path notes (Docker vs host):
-#   Inside container  : /workspace  → /work/ammar/sslrp/biomass
-#                       /data/ammar/4g.zarr  (dataset, read-only)
-#   On host directly  : replace /workspace with /data/ammar/biomass
-#
-# Training phases (switch manually + --resume between phases):
-#   Phase 1 – freeze_encoder: true,  lr 1e-4  (head + species branch only)
-#   Phase 2 – freeze_encoder: false, lr 5e-5 (single AdamW on all parameters;
-#             no per-module LR in config — use 1e-5 if training is unstable)
-# ─────────────────────────────────────────────────────────────────────────────
 
-data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data/4g.zarr
+  split_file: /data/4g.zarr/patch_index_subset.parquet
 
   split_column: split
   patch_idx_column: zarr_idx
@@ -39,7 +25,6 @@ model:
 
   clay:
     # Path to Clay v1.5 Lightning checkpoint (downloaded from HuggingFace).
-    # Default: repo artifacts (same mount as norm_stats when /data/ammar/biomass → /workspace).
     # wget -O artifacts/checkpoints/clay-v1.5.ckpt \
     #   https://huggingface.co/made-with-clay/Clay/resolve/main/v1.5/clay-v1.5.ckpt
     ckpt_path: /workspace/artifacts/checkpoints/clay-v1.5.ckpt

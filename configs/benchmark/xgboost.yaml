@@ -6,13 +6,13 @@
 # per-seed artifacts: /workspace/artifacts/benchmark/xgb/seed_<S>/
 #
 # Paths use Docker mounts:
-#   dataset → /data/ammar/4g.zarr  (read-only)
+#   dataset → /data//4g.zarr  (read-only)
 #   code    → /workspace
 # ─────────────────────────────────────────────────────────────────────────────
 
 data:
-  root: /data/ammar/4g.zarr
-  split_file: /data/ammar/4g.zarr/patch_index_subset.parquet
+  root: /data//4g.zarr
+  split_file: /data//4g.zarr/patch_index_subset.parquet
 
   split_column: split
   patch_idx_column: zarr_idx

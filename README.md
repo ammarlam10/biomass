@@ -11,15 +11,8 @@ Pixel-wise regression of **tree count** and **mean height** from multi-seasonal 
 
 ### 1. Configure paths
 
-Open `docker-compose.yml` and update the volume block to point at your dataset and working directory:
+Open `docker-compose.yml` and update the volume block to point at your dataset and working directory
 
-```yaml
-x-volumes: &volumes
-  volumes:
-    - /path/to/dataset.zarr:/data/ammar/4g.zarr:ro
-    - /path/to/this/repo:/workspace
-    - /path/to/this/repo/artifacts:/workspace/artifacts
-```
 
 ### 2. Build the image
 
